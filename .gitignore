@@ -1,0 +1,7 @@
+/build/android/obj/
+/build/android/libs/
+/obj/
+/libs/
+/.idea/
+/.vscode/
+*.iml
