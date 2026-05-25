@@ -1,0 +1,5 @@
+src/common/JavaHookLog.h
+src/common/JavaHookLog.cpp
+src/common/ArtStructDetector.h
+src/common/ArtStructDetector.cpp
+src/framework/HookStore.h

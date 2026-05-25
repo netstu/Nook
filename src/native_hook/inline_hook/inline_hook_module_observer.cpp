@@ -1,5 +1,6 @@
 #include "native_hook/inline_hook/inline_hook_module_observer.h"
 
+#include "agent_runtime/nook_native_js_bridge.h"
 #include "native_hook/core/module_info.h"
 #include "native_hook/core/native_hook_symbol_resolver.h"
 #include "native_hook/inline_hook/inline_hook_impl.h"
@@ -133,9 +134,9 @@ NookStatus InstallPendingInlineSymbolHook(const char* module_path,
                                           void*) {
     void* target_address = nullptr;
     NookStatus status = NOOK_STATUS_INTERNAL_ERROR;
-    if (NookNativeInternal::ResolveSymbolAddressInLoadedModule(module_path,
-                                                               symbol_name,
-                                                               &target_address)) {
+    if (NookNativeHookInternal::ResolveSymbolAddressInLoadedModule(module_path,
+                                                                   symbol_name,
+                                                                   &target_address)) {
         status = NookInlineHookAddress(target_address, replacement, original, hook_handle);
     }
     LogObserverEvent(status == NOOK_STATUS_OK ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR,
@@ -163,12 +164,22 @@ bool NotifyModuleLoaded(const char* module_path) {
     PendingInlineHookInstallerDependencies dependencies = {};
     dependencies.install_symbol_hook = &InstallPendingInlineSymbolHook;
     const size_t installed = TryInstallPendingInlineHooksForModule(module_path, dependencies);
+    std::string native_js_error;
+    size_t native_js_installed = 0u;
+#if !defined(NOOK_ZYGOTE_HELPER_ONLY)
+    native_js_installed =
+            nook::agent_runtime::NotifyNativeJsHookModuleLoaded(module_path, &native_js_error);
+#else
+    native_js_error = "disabled in zygote-helper-only build";
+#endif
     SetModuleNotificationActive(false);
     LogObserverEvent(ANDROID_LOG_INFO,
-                     "module notify path=%s installed=%zu",
+                     "module notify path=%s installed=%zu native_js_installed=%zu native_js_error=%s",
                      module_path,
-                     installed);
-    return installed > 0u;
+                     installed,
+                     native_js_installed,
+                     native_js_error.empty() ? "(none)" : native_js_error.c_str());
+    return installed > 0u || native_js_installed > 0u;
 }
 
 bool TryGetProbeModuleInfo(xdl_info_t* probe_info) {

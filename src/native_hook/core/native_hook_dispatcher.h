@@ -6,7 +6,7 @@
 #include <string>
 #include <unistd.h>
 
-namespace NookNativeInternal {
+namespace NookNativeHookInternal {
 
 struct ResolvedHookTarget {
     const char* module_name = nullptr;
@@ -37,6 +37,6 @@ NookStatus HookSymbolWithFallback(const char* module_name,
                                   void** original,
                                   const FallbackHookDependencies& dependencies);
 
-}  // namespace NookNativeInternal
+}  // namespace NookNativeHookInternal
 
 #endif  // NOOK_NATIVE_HOOK_DISPATCHER_H

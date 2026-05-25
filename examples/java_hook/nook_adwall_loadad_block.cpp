@@ -2,17 +2,18 @@
 #include "JVM.h"
 
 #include <android/log.h>
-#include <thread>
-#include <unistd.h>
+#include <mutex>
 
 #define TAG "NookAdWallHook"
 
-static JavaVM* g_jvm = nullptr;
-static bool g_hook_installed = false;
-static bool g_initialized = false;
-static bool g_init_started = false;
+static constexpr int kDeferredRequestIdBase = 0x40000000;
+static std::once_flag g_register_once;
 
 static void log_jstring(JNIEnv* env, const char* label, jobject value) {
+    if (env == nullptr) {
+        return;
+    }
+
     if (value == nullptr) {
         __android_log_print(ANDROID_LOG_INFO, TAG, "%s=null", label);
         return;
@@ -60,12 +61,24 @@ static int hook_content_adapter_get_item_count(JNIEnv* env,
     return 0;
 }
 
-static bool install_hook_now() {
-    if (g_hook_installed) {
-        return true;
+static void log_hook_registration(const char* method_name, int hook_id) {
+    if (hook_id >= kDeferredRequestIdBase) {
+        __android_log_print(ANDROID_LOG_INFO,
+                            TAG,
+                            "Deferred hook request registered: %s request=%d",
+                            method_name != nullptr ? method_name : "<null>",
+                            hook_id);
+    } else {
+        __android_log_print(ANDROID_LOG_INFO,
+                            TAG,
+                            "Hook installed immediately: %s hook=%d",
+                            method_name != nullptr ? method_name : "<null>",
+                            hook_id);
     }
+}
 
-    int load_ad_hook_id = NookJavaHookHook(
+static void register_hooks_once() {
+    const int load_ad_hook_id = NookJavaHookHookDeferred(
         "com/demo/target/AdWallFragment",
         "loadAd",
         "(Ljava/lang/String;Ljava/lang/String;)V",
@@ -74,10 +87,11 @@ static bool install_hook_now() {
 
     if (load_ad_hook_id < 0) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "loadAd hook installation failed: %d", load_ad_hook_id);
-        return false;
+    } else {
+        log_hook_registration("AdWallFragment.loadAd", load_ad_hook_id);
     }
 
-    int item_count_hook_id = NookJavaHookHook(
+    const int item_count_hook_id = NookJavaHookHookDeferred(
         "com/demo/target/AdWallFragment$ContentAdapter",
         "getItemCount",
         "()I",
@@ -86,60 +100,20 @@ static bool install_hook_now() {
 
     if (item_count_hook_id < 0) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "getItemCount hook installation failed: %d", item_count_hook_id);
-        return false;
-    }
-
-    __android_log_print(ANDROID_LOG_INFO,
-                        TAG,
-                        "Hooks installed successfully: loadAd=%d getItemCount=%d",
-                        load_ad_hook_id,
-                        item_count_hook_id);
-    g_hook_installed = true;
-    return true;
-}
-
-static void init_and_install_hook_in_thread() {
-    if (g_initialized) {
-        return;
-    }
-    g_initialized = true;
-
-    NookStatus status = NookJavaHookInitialize();
-    __android_log_print(ANDROID_LOG_INFO, TAG, "NookJavaHookInitialize status=%d", status);
-    if (status != NOOK_STATUS_OK) {
-        return;
-    }
-
-    for (int attempt = 0; attempt < 10; ++attempt) {
-        if (install_hook_now()) {
-            return;
-        }
-        usleep(200000);
+    } else {
+        log_hook_registration("AdWallFragment$ContentAdapter.getItemCount", item_count_hook_id);
     }
 }
 
 __attribute__((constructor))
 static void on_library_loaded() {
-    if (!g_init_started) {
-        g_init_started = true;
-        std::thread([]() {
-            usleep(100000);
-            init_and_install_hook_in_thread();
-        }).detach();
-    }
+    std::call_once(g_register_once, register_hooks_once);
 }
 
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
-    g_jvm = vm;
-    JavaEnv::SetJavaVM(g_jvm);
-
-    if (!g_init_started) {
-        g_init_started = true;
-        std::thread([]() {
-            init_and_install_hook_in_thread();
-        }).detach();
-    }
+    JavaEnv::SetJavaVM(vm);
+    std::call_once(g_register_once, register_hooks_once);
 
     return JNI_VERSION_1_6;
 }

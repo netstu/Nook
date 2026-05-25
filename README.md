@@ -1,221 +1,116 @@
 # Nook
 
-Nook 是一个面向 Android 的 Hook 框架，在同一套代码中同时承载：
+Nook 是一个面向 rooted Android 设备的动态插桩工具。
 
-- Java Hook
-- PLT Hook
-- Inline Hook
+当前公开版本聚焦这些能力：
 
-详细介绍可参考看雪主页文章：
+- Android
+- root 环境
+- arm64-v8a
+- `spawn` / `attach`
+- Java / Native / Memory Hook
+- 单文件部署的 `nook-server`
+- Python CLI：`nook-cli`
 
-- https://bbs.kanxue.com/user-home-985628.htm
+## 快速开始
 
-当前仓库：
+直接在release中下载server，和Frida一样push到/data/local/tmp后运行，
 
-- 对外头文件位于 `include/nook/`
-- 框架实现位于 `src/`
-- Android 构建入口位于 `build/android/`
-- `examples/` 仅保留参考源码，默认**不参与构建**
+然后宿主侧执行
 
-当前主要支持目标为 `arm64-v8a`。
-
-这个仓库当前的定位是：
-
-- 提供可直接集成的 Hook 框架源码
-- 提供可复用的 Android NDK 构建入口
-- 提供参考示例源码，帮助你在自己的目标工程里落地
-
-## 当前能力状态
-
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| Java Hook | 已支持 | 导出自 `libnook.so` |
-| PLT Hook | 已支持 | ELFIO 主路径 + fallback 解析路径 |
-| Inline Hook（arm64） | 已支持 | 支持地址 Hook、符号 Hook、延迟符号 Hook |
-| Inline Hook（arm32） | 未支持 | 后续再补 |
-
-## 仓库结构
-
-```text
-include/nook/                 对外公开头文件
-src/framework/                对外 API 入口层
-src/java_hook/                Java Hook 实现
-src/native_hook/core/         Native Hook 公共支撑层
-src/native_hook/plt_hook/     PLT Hook 实现
-src/native_hook/inline_hook/  arm64 Inline Hook 实现
-src/common/                   公共工具与日志
-examples/                     参考源码，不默认构建
-build/android/                Android.mk / Application.mk / CMakeLists.txt
-third_party/                  内置第三方依赖
+```
+python -m pip install --upgrade nook-cli
 ```
 
-## 公开头文件
+或者自己跟着下面步骤编译。
 
-- [`include/nook/Nook.h`](./include/nook/Nook.h)
-- [`include/nook/NookJavaHook.h`](./include/nook/NookJavaHook.h)
-- [`include/nook/NookJavaHookMacros.h`](./include/nook/NookJavaHookMacros.h)
-- [`include/nook/NookPltHook.h`](./include/nook/NookPltHook.h)
-- [`include/nook/NookInlineHook.h`](./include/nook/NookInlineHook.h)
-
-## API 概览
-
-### 基础接口
-
-- `NookGetVersion`
-
-### Java Hook
-
-- `NookJavaHookInitialize`
-- `NookJavaHookIsAvailable`
-- `NookJavaHookHook`
-- `NookJavaHookUnhook`
-- `NookJavaHookUnhookAll`
-
-如果你是写 payload，推荐直接使用 `NookJavaHookMacros.h` 中的宏封装。
-
-### PLT Hook
-
-- `NookPltHookInitialize`
-- `NookPltHookIsAvailable`
-- `NookPltHookSymbol`
-
-适用于目标函数通过 PLT/GOT 导入链路被调用的场景。
-
-### Inline Hook
-
-- `NookInlineHookInitialize`
-- `NookInlineHookIsAvailable`
-- `NookInlineHookAddress`
-- `NookInlineHookSymbol`
-- `NookInlineHookSymbolDeferred`
-- `NookInlineUnhook`
-
-如果目标模块可能尚未加载，使用 `NookInlineHookSymbolDeferred`。
-
-## 构建
-
-### 依赖
-
-- Android NDK
-- 可调用 `ndk-build` 的终端环境
-
-当前 Android 构建配置：
-
-- ABI: `arm64-v8a`
-- Platform: `android-30`
-- STL: `c++_shared`
-
-详见 [`build/android/Application.mk`](./build/android/Application.mk)。
-
-### 默认构建命令
+### 1. 编译 `nook-server`
 
 在仓库根目录执行：
 
 ```powershell
-ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=./build/android/Android.mk NDK_APPLICATION_MK=./build/android/Application.mk -j4
+powershell -ExecutionPolicy Bypass -File .\tools\build_single_server_package.ps1 -ForceRebuild
 ```
 
-如果 `ndk-build` 不在 `PATH` 中，可以显式指定 NDK 路径：
+产物位于：
+
+```text
+build/single-server-package/arm64-v8a/nook-server
+```
+
+如果 `ndk-build` 不在 `PATH`，先设置：
 
 ```powershell
-& "$env:ANDROID_NDK_HOME\ndk-build.cmd" NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=./build/android/Android.mk NDK_APPLICATION_MK=./build/android/Application.mk -j4
+$env:NOOK_NDK_BUILD="E:\SDK\ndk\25.2.9519653\ndk-build.cmd"
 ```
 
-### 构建产物
+### 2. 安装 `nook-cli`
 
-默认会在 `libs/arm64-v8a/` 下生成：
+进入 `host/nook-py` 后执行：
 
-- `libnook.so`
-- `libnook_inline_observer_probe.so`
-
-其中：
-
-- `libnook.so` 是主框架库
-- `libnook_inline_observer_probe.so` 仅在 **deferred inline hook** 场景下使用
-
-Java Hook、PLT Hook、直接地址 Inline Hook 主要围绕 `libnook.so` 使用。
-
-## 推荐使用方式
-
-这个仓库本身不提供注入器，也不再默认产出测试 payload。
-
-更推荐的使用方式是：
-
-1. clone 当前仓库
-2. 编译出 `libnook.so` 与所需配套库
-3. 在你自己的 payload / App 工程中引入 `include/` 与 `src/`，或者直接链接生成的框架库
-4. 使用你自己的注入器、加载方式或 App 集成方式验证 Hook 效果
-
-## 如何使用
-
-当前仓库已经不再默认构建示例 payload 的 `.so`。如果你需要参考接入方式，可以直接查看 `examples/` 下的源码，并在你自己的目标工程里编译。
-
-### Java Hook 最小示例
-
-```cpp
-#include "nook/NookJavaHookMacros.h"
-
-NOOK_PAYLOAD_CONFIG("HOOK_EXAMPLE", 5, 200);
-
-NOOK_JAVA_BLOCK(
-    "com/demo/target/AdWallFragment",
-    "loadAd",
-    "(Ljava/lang/String;Ljava/lang/String;)V",
-    0
-);
+```powershell
+python -m pip install .
 ```
 
-### PLT Hook 最小示例
+安装完成后可直接使用：
 
-```cpp
-#include "nook/NookPltHook.h"
-
-void* original = nullptr;
-NookPltHookInitialize();
-NookPltHookSymbol("libtarget.so", "strcmp", reinterpret_cast<void*>(replacement), &original);
+```powershell
+nook-cli --help
 ```
 
-### Inline Hook 最小示例
+### 3. 推送并启动服务端
 
-```cpp
-#include "nook/NookInlineHook.h"
-
-void* original = nullptr;
-void* hook_handle = nullptr;
-NookInlineHookInitialize();
-NookInlineHookAddress(target_address,
-                      reinterpret_cast<void*>(replacement),
-                      &original,
-                      &hook_handle);
+```powershell
+adb shell "su -c 'mkdir -p /data/local/tmp/nook'"
+adb push .\build\single-server-package\arm64-v8a\nook-server /data/local/tmp/nook/nook-server
+adb shell "su -c 'chmod 755 /data/local/tmp/nook/nook-server'"
+adb shell "su -c '/data/local/tmp/nook/nook-server'"
 ```
 
-## 示例源码
+部分设备如果不能直接执行，可改用：
 
-`examples/` 目录保留为参考代码，不属于稳定 SDK 接口的一部分。
+```powershell
+adb shell "su -c 'LD_LIBRARY_PATH=/data/local/tmp/nook:$LD_LIBRARY_PATH /system/bin/linker64 /data/local/tmp/nook/nook-server'"
+```
 
-当前保留的 native 示例包括：
+## 基础用法
 
-- `examples/native_hook/nook_native_strcmp_test/`
-- `examples/native_hook/nook_native_inline_test/`
-- `examples/native_hook/nook_native_verify_password_inline_test/`
+### Attach
 
-公共示例运行时胶水代码见：
+```powershell
+nook-cli -U com.demo.target -l .\hook.js
+```
 
-- [`examples/native_hook/common/nook_runtime_loader.h`](./examples/native_hook/common/nook_runtime_loader.h)
+### Spawn
 
-需要注意：这里的 runtime loader 只是开发过程中的示例适配代码，不应视为正式框架 API。
+```powershell
+nook-cli -U -f com.demo.target -l .\hook.js
+```
 
-## 当前边界
+### 查看应用 / 进程
 
-- arm32 inline hook 尚未实现
-- x86 / x86_64 inline hook 尚未实现
-- deferred inline hook 目前仍依赖 `libnook_inline_observer_probe.so`
-- 当前仓库更偏向研究/集成型框架源码，而不是已经完全 SDK 化的成品
+```powershell
+nook-cli apps
+nook-cli ps
+```
 
-## 参考项目
+## 仓库结构
 
-https://github.com/bytedance/android-inline-hook
+```text
+build/android/      Android NDK 构建文件
+docs/               核心设计与架构文档
+examples/           基础示例
+host/nook-py/       Python SDK 与 CLI
+include/            对外头文件
+server/             nook-server 源码
+src/                核心框架与运行时
+tests/              单元测试与回归测试
+third_party/        第三方依赖
+tools/              构建与辅助脚本
+```
 
-https://github.com/Lynnette177/GirlHook
+## 说明
 
-https://github.com/canyie/pine
+- 当前仓库是源码发布仓库，适合 clone 后自行构建和开发。
+- `nook-cli` 不内置 Android 端二进制，使用时需要自行下载或编译 `nook-server`。
+- 当前公开支持范围以 rooted Android arm64 为主。

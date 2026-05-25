@@ -38,7 +38,7 @@ InlineHookSymbolAttemptResult TryInstallInlineHookSymbolNow(const char* module_n
     }
 
     void* target_address = nullptr;
-    if (!NookNativeInternal::ResolveSymbolAddress(module_name, symbol_name, &target_address)) {
+    if (!NookNativeHookInternal::ResolveSymbolAddress(module_name, symbol_name, &target_address)) {
         if (failure_status != nullptr) {
             *failure_status = NOOK_STATUS_INTERNAL_ERROR;
         }
@@ -64,9 +64,9 @@ NookStatus InstallPendingInlineHookSymbol(const char* module_path,
                                          void*) {
     void* target_address = nullptr;
     NookStatus status = NOOK_STATUS_INTERNAL_ERROR;
-    if (NookNativeInternal::ResolveSymbolAddressInLoadedModule(module_path,
-                                                               symbol_name,
-                                                               &target_address)) {
+    if (NookNativeHookInternal::ResolveSymbolAddressInLoadedModule(module_path,
+                                                                   symbol_name,
+                                                                   &target_address)) {
         status = NookInlineHookAddress(target_address, replacement, original, hook_handle);
     }
     LogDeferredEvent(status == NOOK_STATUS_OK ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR,

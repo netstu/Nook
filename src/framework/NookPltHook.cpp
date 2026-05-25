@@ -59,13 +59,13 @@ NookStatus NookPltHookSymbol(const char* module_name,
     }
 
 #if defined(__ANDROID__) || defined(__linux__)
-    const NookNativeInternal::FallbackHookDependencies dependencies = {
+    const NookNativeHookInternal::FallbackHookDependencies dependencies = {
             &ResolveModuleInfo,
-            &NookNativeInternal::TryPltHookWithElfio,
-            &NookNativeInternal::TryPltHookWithElfReader,
+            &NookNativeHookInternal::TryPltHookWithElfio,
+            &NookNativeHookInternal::TryPltHookWithElfReader,
             nullptr};
 
-    return NookNativeInternal::HookSymbolWithFallback(
+    return NookNativeHookInternal::HookSymbolWithFallback(
             module_name, symbol_name, replacement, original, dependencies);
 #else
     return NOOK_STATUS_NOT_IMPLEMENTED;

@@ -15,9 +15,11 @@ static constexpr uint32_t kAccStatic = 0x0008;
 static constexpr uint32_t kAccFinal = 0x0010;
 static constexpr uint32_t kAccNative = 0x0100;
 static constexpr uint32_t kAccFastNative = 0x00080000;
-static constexpr uint32_t kAccCriticalNative = 0x00100000;
+static constexpr uint32_t kAccCriticalNative = 0x00200000;
 static constexpr uint32_t kAccCompileDontBother = 0x02000000;
 static constexpr uint32_t kAccNterpEntryPointFastPathFlag = 0x00100000;
+static constexpr uint32_t kAccSingleImplementation = 0x08000000;
+static constexpr uint32_t kAccFastInterpreterToInterpreterInvoke = 0x40000000;
 
 enum GcCause {
     kGcCauseDebugger,
@@ -68,6 +70,7 @@ using HookCallback = std::function<bool(JNIEnv*, jobject, HookValue*, size_t, Ho
 struct HookInfo {
     std::string className;
     std::string methodName;
+    std::string signature;
     std::string shorty;
     bool isStatic;
     void* artMethod;
@@ -80,10 +83,33 @@ struct HookInfo {
     uint64_t hookedJNIEntry;
     uint32_t hookedFlag;
     bool backupValid;
+    bool usesStaticReplacement;
+    void* staticReplacementHookHandle;
+    void* staticReplacementOriginalEntry;
     ArtMethodSpec layout;
     jmethodID methodID;
     HookCallback callback;
     bool valid;
+};
+
+struct ResolvedJavaMethod {
+    jmethodID method_id = nullptr;
+    std::string signature;
+    std::string shorty;
+};
+
+struct DeoptDiagnostics {
+    bool symbolsAvailable;
+    bool runtimeAvailable;
+    bool invalidated;
+    uint64_t runtimeAddress;
+    uint64_t codeCacheAddress;
+    uint64_t runtimeOffset;
+    size_t scanStart;
+    size_t scanEnd;
+    size_t candidatesSeen;
+    size_t readableCandidates;
+    std::string reason;
 };
 
 class JavaHook {
@@ -95,17 +121,36 @@ public:
                           const char* shorty,
                           bool isStatic,
                           HookCallback callback);
+    static int HookMethodWithLoader(const char* className,
+                                    jobject loader,
+                                    const char* methodName,
+                                    const char* shorty,
+                                    bool isStatic,
+                                    HookCallback callback);
+
+    static bool InvokeOriginalMethod(int hookId,
+                                     JNIEnv* env,
+                                     jobject thiz,
+                                     HookValue* args,
+                                     size_t arg_count,
+                                     HookValue* result);
 
     static bool Unhook(int hookId);
     static void UnhookAll();
+    static bool DeoptimizeJit(bool* invalidated);
+    static bool GetLastDeoptDiagnostics(DeoptDiagnostics* out);
+    static bool SetForcedInterpretOnly(bool enable, bool* changed);
+    static void GetArtRouterDebug(uint64_t* last_x0, uint64_t* miss_count);
 
     static jclass FindClass(JNIEnv* env, const char* className);
+    static jclass FindClassWithLoader(JNIEnv* env, jobject loader, const char* className);
 
-    static std::pair<jmethodID, std::string> FindMethod(JNIEnv* env,
-                                                        jclass clazz,
-                                                        const char* methodName,
-                                                        const char* shorty,
-                                                        bool isStatic);
+    static ResolvedJavaMethod FindMethod(JNIEnv* env,
+                                         jclass clazz,
+                                         const char* methodName,
+                                         const char* shorty,
+                                         bool isStatic);
+    static bool GetHookSignature(int hookId, std::string* signature);
 
 private:
     static bool InitArtInternals();

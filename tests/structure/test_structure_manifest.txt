@@ -1,0 +1,13 @@
+include/nook/Nook.h
+include/nook/NookJavaHook.h
+include/nook/NookNativeHook.h
+src/framework/.gitkeep
+src/java_hook/.gitkeep
+src/native_hook/.gitkeep
+src/common/.gitkeep
+examples/java_hook/.gitkeep
+third_party/elfio/.gitkeep
+third_party/xdl/.gitkeep
+build/android/Android.mk
+build/android/Application.mk
+build/android/CMakeLists.txt

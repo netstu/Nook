@@ -1,49 +1,44 @@
-# Android NDK build outputs
+# Android build outputs
 /obj/
+/out/
 /libs/
-/build/*.exe
-/build/*.o
-/build/*.obj
+/build/android/obj/
+/build/android/libs/
+/build/single-server-package/
+/build/single-server-staging/
 
-# Host-side compiled test artifacts
-/tests/
+# Local runtime leftovers
+/server.out
+/server.err
+/spawn_markers/
+*.sock
+
+# Python packaging/cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# Local scratch
+/.tmp/
+/.tmp_*/
+/tmp/
+/tmp_*
+*_tmp*
+
+# Local lab / reverse-engineering materials
+/tests/Test_Lab/
+
+# Test build artifacts
 /tests/**/*.exe
 /tests/**/*.o
 /tests/**/*.obj
 
-# Temporary local binaries and scratch files
-/tmp_*.so
-/tmp_*.dll
-/tmp_*.exe
-/tmp_*.bin
-/tmp_*.txt
-/docs/
-
-# Third-party local content not needed for this repository build
-/third_party/elfio/.github/
-/third_party/elfio/.vscode/
-/third_party/elfio/cmake/
-/third_party/elfio/doc/
-/third_party/elfio/examples/
-/third_party/elfio/tests/
-/third_party/elfio/.clang-format
-/third_party/elfio/.gitignore
-/third_party/elfio/.gitkeep
-/third_party/elfio/CMakeLists.txt
-/third_party/xdl/.gitkeep
-
-# Local placeholder files
-/examples/java_hook/.gitkeep
-/src/common/.gitkeep
-/src/framework/.gitkeep
-/src/java_hook/.gitkeep
-/src/native_hook/inline_hook/.gitkeep
-/src/java_hook/hook_handler_FIXED.cpp
-
-# Local tooling scratch directories
-/.tmp_*/
-
-# Editor / OS noise
+# Editors / OS
 .DS_Store
 Thumbs.db
-desktop.ini

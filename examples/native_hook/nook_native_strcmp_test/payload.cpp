@@ -37,14 +37,14 @@ int hooked_strcmp(const char* a, const char* b) {
 }
 
 void install_hook_worker() {
-    NookExampleRuntimeLoader::NookPltApi api = {};
-    if (!NookExampleRuntimeLoader::ResolveNookPltApi(kTag, &api)) {
-        __android_log_print(ANDROID_LOG_ERROR, kTag, "ResolveNookPltApi failed");
+    NookExampleRuntimeLoader::NookNativeApi api = {};
+    if (!NookExampleRuntimeLoader::ResolveNookNativeApi(kTag, &api)) {
+        __android_log_print(ANDROID_LOG_ERROR, kTag, "ResolveNookNativeApi failed");
         return;
     }
 
     const NookStatus init_status = api.initialize();
-    __android_log_print(ANDROID_LOG_INFO, kTag, "NookPltHookInitialize status=%d", init_status);
+    __android_log_print(ANDROID_LOG_INFO, kTag, "NookNativeHookInitialize status=%d", init_status);
     if (init_status != NOOK_STATUS_OK) {
         return;
     }
@@ -57,7 +57,7 @@ void install_hook_worker() {
                                                        &original);
         __android_log_print(ANDROID_LOG_INFO,
                             kTag,
-                            "NookPltHookSymbol attempt=%d status=%d original=%p",
+                            "NookNativeHookHookSymbol attempt=%d status=%d original=%p",
                             attempt,
                             hook_status,
                             original);

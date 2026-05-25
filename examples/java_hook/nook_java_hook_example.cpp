@@ -2,15 +2,13 @@
 #include "JVM.h"
 
 #include <android/log.h>
-#include <thread>
-#include <unistd.h>
+#include <mutex>
 
 #define TAG "NookJavaHookExample"
 
-static JavaVM* g_jvm = nullptr;
-static bool g_hook_installed = false;
-static bool g_initialized = false;
-static bool g_init_started = false;
+static constexpr int kDeferredRequestIdBase = 0x40000000;
+
+static std::once_flag g_register_once;
 
 static int hook_get_num_from_java_method(JNIEnv* env,
                                          jobject thiz,
@@ -29,12 +27,8 @@ static int hook_get_num_from_java_method(JNIEnv* env,
     return 0;
 }
 
-static bool install_hook_now() {
-    if (g_hook_installed) {
-        return true;
-    }
-
-    int hook_id = NookJavaHookHook(
+static void register_hook_once() {
+    const int hook_id = NookJavaHookHookDeferred(
         "cn/n1ng/hooktest/JavaHookTest",
         "get_num_from_java_method",
         "()I",
@@ -42,57 +36,26 @@ static bool install_hook_now() {
         hook_get_num_from_java_method);
 
     if (hook_id >= 0) {
-        __android_log_print(ANDROID_LOG_INFO, TAG, "Hook installed successfully: %d", hook_id);
-        g_hook_installed = true;
-        return true;
+        if (hook_id >= kDeferredRequestIdBase) {
+            __android_log_print(ANDROID_LOG_INFO, TAG, "Hook deferred pending request registered: %d", hook_id);
+        } else {
+            __android_log_print(ANDROID_LOG_INFO, TAG, "Hook installed successfully: %d", hook_id);
+        }
+        return;
     }
 
     __android_log_print(ANDROID_LOG_ERROR, TAG, "Hook installation failed: %d", hook_id);
-    return false;
-}
-
-static void init_and_install_hook_in_thread() {
-    if (g_initialized) {
-        return;
-    }
-    g_initialized = true;
-
-    NookStatus status = NookJavaHookInitialize();
-    __android_log_print(ANDROID_LOG_INFO, TAG, "NookJavaHookInitialize status=%d", status);
-    if (status != NOOK_STATUS_OK) {
-        return;
-    }
-
-    for (int attempt = 0; attempt < 5; ++attempt) {
-        if (install_hook_now()) {
-            return;
-        }
-        sleep(1);
-    }
 }
 
 __attribute__((constructor))
 static void on_library_loaded() {
-    if (!g_init_started) {
-        g_init_started = true;
-        std::thread([]() {
-            usleep(100000);
-            init_and_install_hook_in_thread();
-        }).detach();
-    }
+    std::call_once(g_register_once, register_hook_once);
 }
 
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
-    g_jvm = vm;
-    JavaEnv::SetJavaVM(g_jvm);
-
-    if (!g_init_started) {
-        g_init_started = true;
-        std::thread([]() {
-            init_and_install_hook_in_thread();
-        }).detach();
-    }
+    JavaEnv::SetJavaVM(vm);
+    std::call_once(g_register_once, register_hook_once);
 
     return JNI_VERSION_1_6;
 }

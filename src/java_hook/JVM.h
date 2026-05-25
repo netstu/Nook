@@ -20,6 +20,7 @@ public:
     JNIEnv* operator->() const;
     JavaVM* getJVM() const;
     bool isNull() const;
+    static JavaVM* GetJavaVM();
 
     // 设置全局 JavaVM（从 JNI_OnLoad 调用）
     static void SetJavaVM(JavaVM* vm);
@@ -28,8 +29,9 @@ private:
     JNIEnv* env = nullptr;
     JavaVM* javaVm = nullptr;
     bool attached = false;
+    bool acquired_from_cache = false;
 
-    JavaVM* getJavaVMInternal();
+    static JavaVM* getJavaVMInternal();
     static JavaVM* g_globalJavaVM;  // 全局 JavaVM 指针
 };
 

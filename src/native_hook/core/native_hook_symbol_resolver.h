@@ -1,6 +1,6 @@
 #pragma once
 
-namespace NookNativeInternal {
+namespace NookNativeHookInternal {
 
 using OpenSymbolModuleFn = void* (*)(const char* module_name, void* context);
 using FindSymbolInModuleFn = void* (*)(void* handle, const char* symbol_name, void* context);
@@ -30,5 +30,12 @@ bool ResolveSymbolAddressInLoadedModule(const char* module_name,
                                         void** symbol_address);
 
 bool ResolveSymbolAddress(const char* module_name, const char* symbol_name, void** symbol_address);
+bool IsSymbolInlineHookSafeInLoadedModule(const char* module_name,
+                                          const char* symbol_name,
+                                          void* symbol_address);
+bool IsSymbolInlineHookSafeInModuleFile(const char* module_path,
+                                        const void* module_base,
+                                        const char* symbol_name,
+                                        void* symbol_address);
 
-}  // namespace NookNativeInternal
+}  // namespace NookNativeHookInternal

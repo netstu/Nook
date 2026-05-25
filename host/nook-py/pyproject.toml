@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nook-cli"
+version = "0.0.1"
+description = "Python CLI for the Nook Android instrumentation server"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Nook Contributors", email = "3049155267@qq.com" },
+]
+maintainers = [
+    { name = "Nook Contributors", email = "3049155267@qq.com" },
+]
+
+[project.urls]
+Homepage = "https://github.com/x1aon1ng/Nook"
+Repository = "https://github.com/x1aon1ng/Nook"
+
+[project.scripts]
+nook-cli = "nook.cli:main"
+
+[tool.setuptools]
+packages = ["nook"]

@@ -8,8 +8,8 @@
 
 namespace NookExampleRuntimeLoader {
 
-constexpr char kRuntimePath[] = "/data/local/tmp/Ninjector/libnook.so";
-constexpr char kCxxSharedPath[] = "/data/local/tmp/Ninjector/libc++_shared.so";
+constexpr char kRuntimePath[] = "/data/local/tmp/nook/libnook.so";
+constexpr char kCxxSharedPath[] = "/data/local/tmp/nook/libc++_shared.so";
 
 using NookInlineHookInitializeFn = NookStatus (*)(void);
 using NookInlineHookAddressFn = NookStatus (*)(void* target_address,
@@ -22,11 +22,11 @@ using NookInlineHookSymbolDeferredFn = NookStatus (*)(const char* module_name,
                                                       void** original,
                                                       void** hook_handle);
 using NookInlineUnhookFn = NookStatus (*)(void* hook_handle);
-using NookPltHookInitializeFn = NookStatus (*)(void);
-using NookPltHookHookSymbolFn = NookStatus (*)(const char* module_name,
-                                               const char* symbol_name,
-                                               void* replacement,
-                                               void** original);
+using NookNativeHookInitializeFn = NookStatus (*)(void);
+using NookNativeHookHookSymbolFn = NookStatus (*)(const char* module_name,
+                                                  const char* symbol_name,
+                                                  void* replacement,
+                                                  void** original);
 
 struct NookInlineApi {
     NookInlineHookInitializeFn initialize = nullptr;
@@ -35,9 +35,9 @@ struct NookInlineApi {
     NookInlineUnhookFn unhook = nullptr;
 };
 
-struct NookPltApi {
-    NookPltHookInitializeFn initialize = nullptr;
-    NookPltHookHookSymbolFn hook_symbol = nullptr;
+struct NookNativeApi {
+    NookNativeHookInitializeFn initialize = nullptr;
+    NookNativeHookHookSymbolFn hook_symbol = nullptr;
 };
 
 inline void LogRuntimeLoader(int priority, const char* tag, const char* format, ...) {
@@ -116,18 +116,19 @@ inline bool ResolveNookInlineApi(const char* tag, NookInlineApi* api) {
            api->hook_symbol_deferred != nullptr && api->unhook != nullptr;
 }
 
-inline bool ResolveNookPltApi(const char* tag, NookPltApi* api) {
+inline bool ResolveNookNativeApi(const char* tag, NookNativeApi* api) {
     if (api == nullptr) {
         return false;
     }
 
     void* runtime_handle = EnsureNookRuntimeLoaded(tag);
-    api->initialize = ResolveSymbol<NookPltHookInitializeFn>(runtime_handle,
-                                                             "NookPltHookInitialize",
-                                                             tag);
-    api->hook_symbol = ResolveSymbol<NookPltHookHookSymbolFn>(runtime_handle,
-                                                              "NookPltHookSymbol",
-                                                              tag);
+    api->initialize = ResolveSymbol<NookNativeHookInitializeFn>(runtime_handle,
+                                                                "NookNativeHookInitialize",
+                                                                tag);
+    api->hook_symbol =
+            ResolveSymbol<NookNativeHookHookSymbolFn>(runtime_handle,
+                                                      "NookNativeHookHookSymbol",
+                                                      tag);
     return api->initialize != nullptr && api->hook_symbol != nullptr;
 }
 

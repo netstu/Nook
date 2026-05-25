@@ -1,6 +1,6 @@
 #include "native_hook_dispatcher.h"
 
-namespace NookNativeInternal {
+namespace NookNativeHookInternal {
 
 NookStatus HookSymbolWithFallback(const char* module_name,
                                   const char* symbol_name,
@@ -38,4 +38,4 @@ NookStatus HookSymbolWithFallback(const char* module_name,
     return NOOK_STATUS_INTERNAL_ERROR;
 }
 
-}  // namespace NookNativeInternal
+}  // namespace NookNativeHookInternal

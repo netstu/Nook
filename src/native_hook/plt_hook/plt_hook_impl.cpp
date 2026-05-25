@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace NookNativeInternal {
+namespace NookNativeHookInternal {
 
 bool TryPltHookWithElfio(const ResolvedHookTarget& target, void*) {
     ElfHooker::ElfioImageParser parser;
@@ -42,4 +42,4 @@ bool TryPltHookWithElfReader(const ResolvedHookTarget& target, void*) {
     return reader.hook(target.symbol_name, target.replacement, target.original) == 0;
 }
 
-}  // namespace NookNativeInternal
+}  // namespace NookNativeHookInternal

@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <fstream>
 #include <iostream>
+#include <pthread.h>
 #include <sys/mman.h>
 #include "../../third_party/elfio/elfio/elfio.hpp"
 #include "../../third_party/xdl/xdl.h"
@@ -174,6 +175,49 @@ static bool is_addr_executable(void* ptr) {
     return false;
 }
 
+struct ThreadJavaEnvState {
+    JNIEnv* env = nullptr;
+    JavaVM* java_vm = nullptr;
+    bool attached = false;
+};
+
+namespace {
+
+void DestroyThreadJavaEnvState(void* value) {
+    auto* state = static_cast<ThreadJavaEnvState*>(value);
+    if (state != nullptr && state->attached && state->java_vm != nullptr) {
+        state->java_vm->DetachCurrentThread();
+    }
+    delete state;
+}
+
+pthread_key_t& GetThreadJavaEnvStateKey() {
+    static pthread_key_t key = 0;
+    return key;
+}
+
+pthread_once_t& GetThreadJavaEnvStateKeyOnce() {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    return once;
+}
+
+void InitThreadJavaEnvStateKey() {
+    (void)pthread_key_create(&GetThreadJavaEnvStateKey(), &DestroyThreadJavaEnvState);
+}
+
+ThreadJavaEnvState& GetThreadJavaEnvState() {
+    (void)pthread_once(&GetThreadJavaEnvStateKeyOnce(), &InitThreadJavaEnvStateKey);
+    void* value = pthread_getspecific(GetThreadJavaEnvStateKey());
+    if (value == nullptr) {
+        auto* state = new ThreadJavaEnvState();
+        (void)pthread_setspecific(GetThreadJavaEnvStateKey(), state);
+        value = state;
+    }
+    return *static_cast<ThreadJavaEnvState*>(value);
+}
+
+}  // namespace
+
 // 全局 JavaVM 指针
 JavaVM* JavaEnv::g_globalJavaVM = nullptr;
 
@@ -184,51 +228,73 @@ void JavaEnv::SetJavaVM(JavaVM* vm) {
 }
 
 // JavaEnv 实现
-JavaEnv::JavaEnv() {
-    LOGI("→ JavaEnv constructor ENTRY");
+JavaVM* JavaEnv::GetJavaVM() {
+    if (g_globalJavaVM != nullptr) {
+        return g_globalJavaVM;
+    }
 
-    // 优先使用全局 JavaVM（从 JNI_OnLoad 设置）
+    return getJavaVMInternal();
+}
+
+JavaEnv::JavaEnv() {
     if (g_globalJavaVM) {
         javaVm = g_globalJavaVM;
-        LOGI("✓ Using global JavaVM: %p", javaVm);
     } else {
-        // 如果没有设置全局 JavaVM，尝试动态获取
-        LOGI("⚠ Global JavaVM not set, trying dynamic retrieval...");
         javaVm = getJavaVMInternal();
         if (!javaVm) {
-            LOGE("✗ JavaVM not found.");
+            LOGE("JavaVM not found.");
             env = nullptr;
             return;
         }
-        LOGI("✓ JavaVM from dynamic retrieval: %p", javaVm);
     }
 
-    jint ret = javaVm->GetEnv((void**)&env, JNI_VERSION_1_6);
-    LOGI("GetEnv result: %d", ret);
+    ThreadJavaEnvState& thread_state = GetThreadJavaEnvState();
+    if (thread_state.env != nullptr &&
+        thread_state.java_vm == javaVm) {
+        env = thread_state.env;
+        attached = thread_state.attached;
+        acquired_from_cache = true;
+        return;
+    }
 
+    const jint ret = javaVm->GetEnv((void**)&env, JNI_VERSION_1_6);
     if (ret == JNI_EDETACHED) {
-        LOGI("Thread detached, attaching...");
-        if (javaVm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+        const jint attach_ret = javaVm->AttachCurrentThread(&env, nullptr);
+        if (attach_ret == JNI_OK) {
             attached = true;
-            LOGI("✓ Attached thread to JVM");
+            thread_state.env = env;
+            thread_state.java_vm = javaVm;
+            thread_state.attached = true;
         } else {
-            LOGE("✗ Failed to attach thread");
+            LOGE("Failed to attach thread ret=%d", attach_ret);
             env = nullptr;
+#if defined(__ANDROID__)
+            const jint daemon_ret = javaVm->AttachCurrentThreadAsDaemon(&env, nullptr);
+            if (daemon_ret == JNI_OK) {
+                LOGI("AttachCurrentThreadAsDaemon fallback succeeded");
+                attached = true;
+                thread_state.env = env;
+                thread_state.java_vm = javaVm;
+                thread_state.attached = true;
+            } else {
+                LOGE("AttachCurrentThreadAsDaemon fallback failed ret=%d", daemon_ret);
+                env = nullptr;
+            }
+#endif
         }
     } else if (ret != JNI_OK) {
-        LOGE("✗ JNI version not supported");
+        LOGE("JNI version not supported");
         env = nullptr;
     } else {
-        LOGI("✓ Thread already attached");
+        thread_state.env = env;
+        thread_state.java_vm = javaVm;
+        thread_state.attached = false;
     }
-
-    LOGI("← JavaEnv constructor EXIT (env=%p)", env);
 }
 
 JavaEnv::~JavaEnv() {
-    if (attached && javaVm) {
-        javaVm->DetachCurrentThread();
-        LOGI("Detached thread from JVM");
+    if (acquired_from_cache) {
+        return;
     }
 }
 

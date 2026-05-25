@@ -48,6 +48,11 @@ public:
         return data_.size();
     }
 
+    // 外部已经持有 mutex_ 时使用，避免同线程重复加锁。
+    size_t SizeUnsafe() const {
+        return data_.size();
+    }
+
     void Clear() {
         std::unique_lock<std::mutex> lock(mutex_);
         data_.clear();

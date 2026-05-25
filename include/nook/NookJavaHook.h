@@ -51,9 +51,29 @@ int NookJavaHookHook(const char* class_name,
                      const char* signature,
                      int is_static,
                      NookJavaHookCallback callback);
+int NookJavaHookHookWithLoader(JNIEnv* env,
+                               jobject loader,
+                               const char* class_name,
+                               const char* method_name,
+                               const char* signature,
+                               int is_static,
+                               NookJavaHookCallback callback);
+int NookJavaHookHookDeferred(const char* class_name,
+                             const char* method_name,
+                             const char* signature,
+                             int is_static,
+                             NookJavaHookCallback callback);
+int NookJavaHookHookDeferredWithLoader(JNIEnv* env,
+                                       jobject loader,
+                                       const char* class_name,
+                                       const char* method_name,
+                                       const char* signature,
+                                       int is_static,
+                                       NookJavaHookCallback callback);
 NookStatus NookJavaHookUnhook(int hook_id);
 void NookJavaHookUnhookAll(void);
 jclass NookJavaHookFindClass(JNIEnv* env, const char* class_name);
+jclass NookJavaHookFindClassWithLoader(JNIEnv* env, jobject loader, const char* class_name);
 
 #ifdef __cplusplus
 }

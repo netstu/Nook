@@ -17,6 +17,7 @@ include_directories(
 set(NOOK_NATIVE_HOOK_SRC
     ../../src/framework/NookPltHook.cpp
     ../../src/framework/NookInlineHook.cpp
+    ../../src/framework/NookNativeHook.cpp
     ../../src/native_hook/core/native_hook_symbol_resolver.cpp
     ../../src/native_hook/core/native_hook_dispatcher.cpp
     ../../src/native_hook/core/module_info.cpp
@@ -41,6 +42,9 @@ set(NOOK_RUNTIME_SRC
     ${NOOK_NATIVE_HOOK_SRC}
     ../../src/java_hook/JavaHook.cpp
     ../../src/java_hook/JVM.cpp
+    ../../src/java_hook/deferred/java_hook_loader_resolver.cpp
+    ../../src/java_hook/deferred/pending_java_hook_registry.cpp
+    ../../src/java_hook/deferred/java_hook_class_observer.cpp
     ../../src/common/JavaHookLog.cpp
     ../../src/common/ArtStructDetector.cpp
     ../../third_party/xdl/xdl.c
@@ -64,6 +68,46 @@ add_library(nook_inline_observer_probe SHARED
 )
 
 target_link_libraries(nook_inline_observer_probe
+    log
+    dl
+)
+
+add_library(nook_java_hook_example SHARED
+    ../../examples/java_hook/nook_java_hook_example.cpp
+)
+
+target_link_libraries(nook_java_hook_example
+    nook
+    log
+    dl
+)
+
+add_library(nook_native_strcmp_test SHARED
+    ../../examples/native_hook/nook_native_strcmp_test/payload.cpp
+    ../../examples/native_hook/nook_native_strcmp_test/strcmp_replacement.cpp
+)
+
+target_link_libraries(nook_native_strcmp_test
+    log
+    dl
+)
+
+add_library(nook_native_inline_test SHARED
+    ../../examples/native_hook/nook_native_inline_test/payload.cpp
+    ../../examples/native_hook/nook_native_inline_test/target_replacement.cpp
+)
+
+target_link_libraries(nook_native_inline_test
+    log
+    dl
+)
+
+add_library(nook_native_verify_password_inline_test SHARED
+    ../../examples/native_hook/nook_native_verify_password_inline_test/payload.cpp
+    ../../examples/native_hook/nook_native_verify_password_inline_test/verify_password_replacement.cpp
+)
+
+target_link_libraries(nook_native_verify_password_inline_test
     log
     dl
 )
