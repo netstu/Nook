@@ -1810,12 +1810,22 @@ bool NinjectorSpawnInjector::SpawnViaLegacyNcore(const comm::SpawnRequest& reque
         return false;
     }
 
+    std::string runtime_dir = ResolveAuthoritativeRuntimeDirectory(config_);
+    if (runtime_dir.empty()) {
+        runtime_dir = RuntimeDirectoryFromAgentPath(resolved_agent_path);
+    }
+    if (runtime_dir.empty()) {
+        SetError(error_message, "agent runtime directory is empty");
+        return false;
+    }
+
     std::string resolved_ncore_path = kEmbeddedNcoreSentinel;
     bool materialized_embedded_ncore = false;
     std::string embedded_prepare_error;
     bool prepared = ninjector::PrepareSpawnInZygoteEmbedded(zygote_pid,
                                                             request.identifier.c_str(),
                                                             resolved_agent_path.c_str(),
+                                                            runtime_dir.c_str(),
                                                             spawn_token.c_str());
     if (!prepared) {
         if (ops_.get_inject_error) {
@@ -1848,6 +1858,7 @@ bool NinjectorSpawnInjector::SpawnViaLegacyNcore(const comm::SpawnRequest& reque
                                 resolved_ncore_path.c_str(),
                                 request.identifier.c_str(),
                                 resolved_agent_path.c_str(),
+                                runtime_dir.c_str(),
                                 spawn_token.c_str())) {
             std::string error = "prepare_spawn_in_zygote failed";
             if (!embedded_prepare_error.empty()) {
@@ -1872,6 +1883,7 @@ bool NinjectorSpawnInjector::SpawnViaLegacyNcore(const comm::SpawnRequest& reque
         if (ops_.clear_spawn != nullptr &&
             !ops_.clear_spawn(zygote_pid,
                               resolved_ncore_path.c_str(),
+                              runtime_dir.c_str(),
                               spawn_token.c_str())) {
             error += "; rollback failed: clear_spawn_in_zygote failed";
         }
@@ -2075,6 +2087,10 @@ bool NinjectorSpawnInjector::FinalizeLegacySpawn(const comm::SpawnRequest& reque
     const bool materialized_embedded_ncore = owned_materialized_ncore;
     const std::string resolved_agent_path = owned_agent_path;
     const bool materialized_embedded_agent = owned_materialized_agent;
+    std::string runtime_dir = ResolveAuthoritativeRuntimeDirectory(config_);
+    if (runtime_dir.empty()) {
+        runtime_dir = RuntimeDirectoryFromAgentPath(resolved_agent_path);
+    }
     if (!ops_.get_pid || !ops_.clear_spawn) {
         SetError(error_message, "legacy spawn finalize ops are incomplete");
         return false;
@@ -2088,6 +2104,7 @@ bool NinjectorSpawnInjector::FinalizeLegacySpawn(const comm::SpawnRequest& reque
 
     if (!ops_.clear_spawn(zygote_pid,
                           resolved_ncore_path.c_str(),
+                          runtime_dir.empty() ? nullptr : runtime_dir.c_str(),
                           spawn_token.c_str())) {
         SetError(error_message, "clear_spawn_in_zygote failed");
         return false;

@@ -3503,6 +3503,7 @@ bool SpawnViaSymbiEmbedded(int zygote_pid,
 bool PrepareSpawnInZygoteEmbedded(int zygote_pid,
                                   const char* package_name,
                                   const char* so_path,
+                                  const char* runtime_dir,
                                   const char* spawn_token) {
 #if defined(__ANDROID__) && defined(__aarch64__)
     ClearLastInjectError();
@@ -3554,7 +3555,12 @@ bool PrepareSpawnInZygoteEmbedded(int zygote_pid,
     }
 
     RememberEmbeddedNcoreHandle(static_cast<pid_t>(zygote_pid), handle);
-    if (!PrepareSpawnInZygote(zygote_pid, "__embedded_ncore__", package_name, so_path, spawn_token)) {
+    if (!PrepareSpawnInZygote(zygote_pid,
+                              "__embedded_ncore__",
+                              package_name,
+                              so_path,
+                              runtime_dir,
+                              spawn_token)) {
         ClearEmbeddedNcoreHandle(static_cast<pid_t>(zygote_pid));
         CloseRemoteFdBestEffort(static_cast<pid_t>(zygote_pid), remote_fd);
         return false;
@@ -3566,12 +3572,15 @@ bool PrepareSpawnInZygoteEmbedded(int zygote_pid,
     (void)zygote_pid;
     (void)package_name;
     (void)so_path;
+    (void)runtime_dir;
     (void)spawn_token;
     return false;
 #endif
 }
 
-bool ClearSpawnInZygoteEmbedded(int zygote_pid, const char* spawn_token) {
+bool ClearSpawnInZygoteEmbedded(int zygote_pid,
+                                const char* runtime_dir,
+                                const char* spawn_token) {
 #if defined(__ANDROID__) && defined(__aarch64__)
     ClearLastInjectError();
     if (zygote_pid <= 0) {
@@ -3625,6 +3634,9 @@ bool ClearSpawnInZygoteEmbedded(int zygote_pid, const char* spawn_token) {
     (void)RemoteFreeScratch(static_cast<pid_t>(zygote_pid), remote_sym_name, std::strlen("aclear") + 1);
     if (spawn_token != nullptr && spawn_token[0] != '\0') {
         (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_SPAWN_TOKEN");
+    }
+    if (runtime_dir != nullptr && runtime_dir[0] != '\0') {
+        (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_RUNTIME_DIR");
     }
     (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_TARGET_PACKAGE");
     (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_STRICT_ZYGOTE_REQUEST");
@@ -3786,6 +3798,7 @@ bool PrepareSpawnInZygote(int zygote_pid,
                           const char* ncore_path,
                           const char* package_name,
                           const char* so_path,
+                          const char* runtime_dir,
                           const char* spawn_token) {
 #if defined(__ANDROID__) && defined(__aarch64__)
     ClearLastInjectError();
@@ -3854,6 +3867,17 @@ bool PrepareSpawnInZygote(int zygote_pid,
 
     (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_STRICT_ZYGOTE_REQUEST");
     (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_STRICT_ZYGOTE_CONTROL");
+    if (runtime_dir != nullptr && runtime_dir[0] != '\0' &&
+        !RemoteSetEnv(static_cast<pid_t>(zygote_pid), "NOOK_RUNTIME_DIR", runtime_dir)) {
+        SetLastInjectError("remote_setenv_failed:prepare_spawn_runtime_dir");
+        NOOK_LOGE("PrepareSpawnInZygote: RemoteSetEnv runtime dir failed zygote_pid=%d runtime_dir=%s",
+                  zygote_pid,
+                  runtime_dir);
+        if (attached) {
+            DetachProcess(static_cast<pid_t>(zygote_pid));
+        }
+        return false;
+    }
 
     if (spawn_token != nullptr && spawn_token[0] != '\0' &&
         !RemoteSetEnv(static_cast<pid_t>(zygote_pid), "NOOK_SPAWN_TOKEN", spawn_token)) {
@@ -3934,18 +3958,23 @@ bool PrepareSpawnInZygote(int zygote_pid,
     (void)ncore_path;
     (void)package_name;
     (void)so_path;
+    (void)runtime_dir;
+    (void)spawn_token;
     return false;
 #endif
 }
 
-bool ClearSpawnInZygote(int zygote_pid, const char* ncore_path, const char* spawn_token) {
+bool ClearSpawnInZygote(int zygote_pid,
+                        const char* ncore_path,
+                        const char* runtime_dir,
+                        const char* spawn_token) {
 #if defined(__ANDROID__) && defined(__aarch64__)
     if (zygote_pid <= 0 || ncore_path == nullptr || ncore_path[0] == '\0') {
         return false;
     }
 
     if (std::strcmp(ncore_path, "__embedded_ncore__") == 0) {
-        return ClearSpawnInZygoteEmbedded(zygote_pid, spawn_token);
+        return ClearSpawnInZygoteEmbedded(zygote_pid, runtime_dir, spawn_token);
     }
 
     bool attached = false;
@@ -3990,10 +4019,14 @@ bool ClearSpawnInZygote(int zygote_pid, const char* ncore_path, const char* spaw
     if (spawn_token != nullptr && spawn_token[0] != '\0') {
         (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_SPAWN_TOKEN");
     }
+    if (runtime_dir != nullptr && runtime_dir[0] != '\0') {
+        (void)RemoteUnsetEnv(static_cast<pid_t>(zygote_pid), "NOOK_RUNTIME_DIR");
+    }
     return DetachProcess(static_cast<pid_t>(zygote_pid));
 #else
     (void)zygote_pid;
     (void)ncore_path;
+    (void)runtime_dir;
     (void)spawn_token;
     return false;
 #endif

@@ -40,9 +40,11 @@ struct NinjectorSpawnOps {
                        const char* ncore_path,
                        const char* package_name,
                        const char* so_path,
+                       const char* runtime_dir,
                        const char* spawn_token)> prepare_spawn;
     std::function<bool(int zygote_pid,
                        const char* ncore_path,
+                       const char* runtime_dir,
                        const char* spawn_token)> clear_spawn;
     std::function<bool(int pid, const char* runtime_dir, const char* ready_token)> inject_embedded_agent_by_pid;
     std::function<bool(int pid, const char* so_path, const char* ready_token)> inject_so_by_pid;

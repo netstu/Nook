@@ -36,8 +36,11 @@ bool SpawnViaSymbiEmbedded(int zygote_pid,
 bool PrepareSpawnInZygoteEmbedded(int zygote_pid,
                                   const char* package_name,
                                   const char* so_path,
+                                  const char* runtime_dir,
                                   const char* spawn_token);
-bool ClearSpawnInZygoteEmbedded(int zygote_pid, const char* spawn_token);
+bool ClearSpawnInZygoteEmbedded(int zygote_pid,
+                                const char* runtime_dir,
+                                const char* spawn_token);
 bool InjectZygoteAgentByPid(int pid, const char* so_path);
 bool SetZygoteSpawnControl(int zygote_pid,
                            const char* package_name,
@@ -51,8 +54,12 @@ bool PrepareSpawnInZygote(int zygote_pid,
                           const char* ncore_path,
                           const char* package_name,
                           const char* so_path,
+                          const char* runtime_dir,
                           const char* spawn_token);
-bool ClearSpawnInZygote(int zygote_pid, const char* ncore_path, const char* spawn_token);
+bool ClearSpawnInZygote(int zygote_pid,
+                        const char* ncore_path,
+                        const char* runtime_dir,
+                        const char* spawn_token);
 bool StartTargetApp(const char* package_name);
 int WaitForSpawnCallback(const char* result_file);
 std::string GetDefaultSpawnSourceProcess();

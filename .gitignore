@@ -1,44 +1,36 @@
-# Android build outputs
+# Build outputs
 /obj/
 /out/
 /libs/
 /build/android/obj/
-/build/android/libs/
 /build/single-server-package/
 /build/single-server-staging/
 
-# Local runtime leftovers
+# Temporary and local scratch
+/.tmp/
+/.tmp_*/
+/tmp_*
+*_tmp*
+
+# Generated embedded blobs
+/server/generated/
+
+# Runtime leftovers
 /server.out
 /server.err
 /spawn_markers/
 *.sock
 
-# Python packaging/cache
+# Python cache
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.venv/
-venv/
-dist/
-*.egg-info/
 
-# Local scratch
-/.tmp/
-/.tmp_*/
-/tmp/
-/tmp_*
-*_tmp*
-
-# Local lab / reverse-engineering materials
+# Test lab / local test artifacts
 /tests/Test_Lab/
-
-# Test build artifacts
 /tests/**/*.exe
 /tests/**/*.o
 /tests/**/*.obj
 
-# Editors / OS
+# Editor/system files
 .DS_Store
 Thumbs.db
