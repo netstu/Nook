@@ -3,13 +3,14 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace nook {
 namespace agent_runtime {
 
 class ScriptRegistry {
 public:
+    ScriptRegistry();
     bool CreateScript(const std::string& name,
                       const std::string& source,
                       uint32_t* script_id,
@@ -27,8 +28,7 @@ private:
     };
 
     mutable std::mutex mutex_;
-    uint32_t next_script_id_ = 1;
-    std::unordered_map<uint32_t, ScriptRecord> scripts_;
+    std::vector<ScriptRecord> scripts_;
 };
 
 }  // namespace agent_runtime

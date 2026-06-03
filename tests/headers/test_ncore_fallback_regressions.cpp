@@ -66,8 +66,8 @@ int main() {
             "server_main must include embedded ncore blob header");
     Require(Contains(server_main, "NOOK_NCORE_PATH"),
             "server_main must manage NOOK_NCORE_PATH");
-    Require(Contains(server_main, "embedded ncore ready"),
-            "server_main must materialize embedded ncore");
+    Require(Contains(server_main, "embedded ncore blob size=%u source_size=%u sha256=%s source=%s built_utc=%s"),
+            "server_main must log embedded ncore blob metadata");
 
     const std::string ncore_blob_script = ReadFile("tools/build_embedded_ncore_blob.ps1",
                                                    "../../tools/build_embedded_ncore_blob.ps1");
@@ -80,10 +80,14 @@ int main() {
             "ncore blob script must consider staged deployable single-server ncore artifacts");
     Require(Contains(ncore_blob_script, "build\\\\single-server-package\\\\arm64-v8a\\\\libncore.so"),
             "ncore blob script must consider packaged single-server ncore artifacts");
+    Require(Contains(ncore_blob_script, "Split-Path -Leaf $sourcePath"),
+            "ncore blob script must sanitize source metadata to the stable leaf name");
     Require(Contains(ncore_blob_script, "kNookEmbeddedNcoreSourcePath"),
             "ncore blob script must record the embedded ncore source path metadata");
     Require(Contains(ncore_blob_script, "kNookEmbeddedNcoreSourceSha256"),
             "ncore blob script must record the embedded ncore source hash metadata");
+    Require(Contains(ncore_blob_script, "kNookEmbeddedNcoreSourceLastWriteUtc = \"\";"),
+            "ncore blob script must clear timestamp metadata for reproducible builds");
     Require(Contains(ncore_blob_script, "priorityPrefixes"),
             "ncore blob script must prefer deployable/staged artifacts over raw obj/local outputs");
 

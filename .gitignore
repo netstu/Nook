@@ -2,15 +2,36 @@
 /obj/
 /out/
 /libs/
+/build/*
+!/build/android/
 /build/android/obj/
 /build/single-server-package/
 /build/single-server-staging/
+/release-prep/
+/release-final/
+/publish-clean/
+/publish-final/
+/publish-repo/
+/github-publish/
+/github-ready/
 
 # Temporary and local scratch
 /.tmp/
 /.tmp_*/
+/tmp_verify/
+/tmp_verify_android/
+/tmp_verify*/
 /tmp_*
+/tmp/
 *_tmp*
+/.claude/
+/.hermes/
+/.worktrees/
+task_plan.md
+findings.md
+progress.md
+nook-cli
+/codex会话.txt
 
 # Generated embedded blobs
 /server/generated/
@@ -24,6 +45,17 @@
 # Python cache
 __pycache__/
 *.pyc
+/host/nook-py/dist/
+/host/nook-py/*.egg-info/
+/host/nook-py/debug_probes/
+/host/nook-py/*-dexdump/
+/host/nook-py/*-sodump/
+/*-dexdump/
+/*-sodump/
+/cn.n1ng.aboutbear-sodump/
+/com.ad2001.frida0x1-sodump/
+/com.demo.target-sodump/
+/com.jkx5da.client-dexdump/
 
 # Test lab / local test artifacts
 /tests/Test_Lab/

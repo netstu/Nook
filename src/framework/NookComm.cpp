@@ -7,6 +7,7 @@
 #include "../agent_runtime/nook_script_runtime_bridge.h"
 #endif
 #include "../communication/agent/agent_connection.h"
+#include "../communication/transport/tcp_transport.h"
 #include "../communication/transport/unix_transport.h"
 #include "../java_hook/JVM.h"
 #include "../java_hook/deferred/java_hook_class_observer.h"
@@ -56,6 +57,7 @@ NookCommScriptCreateCallback g_script_create_callback = nullptr;
 NookCommScriptLoadCallback g_script_load_callback = nullptr;
 NookCommScriptUnloadCallback g_script_unload_callback = nullptr;
 std::unordered_map<std::string, NookCommRpcHandler> g_rpc_handlers;
+nook::framework::ExternalResumeHandler g_external_resume_handler;
 bool g_spawn_gate_armed = false;
 bool g_spawn_gate_released = true;
 bool g_strict_child_native_gate_armed = false;
@@ -1593,6 +1595,23 @@ void ApplySpawnGateResumeHandlerLocked(uint32_t pid) {
             return response;
         }
 
+        nook::framework::ExternalResumeHandler external_resume_handler;
+        {
+            std::lock_guard<std::mutex> comm_lock(g_comm_mutex);
+            external_resume_handler = g_external_resume_handler;
+        }
+        if (external_resume_handler) {
+            bool handled = false;
+            const NookStatus external_status = external_resume_handler(pid, &handled);
+            if (handled) {
+                if (external_status != NOOK_STATUS_OK) {
+                    response.error.code = static_cast<int32_t>(external_status);
+                    response.error.message = "external resume handler failed";
+                }
+                return response;
+            }
+        }
+
         int new_application_hook_id = -1;
         int call_application_on_create_hook_id = -1;
         int call_activity_on_create_hook_id = -1;
@@ -1762,7 +1781,7 @@ NookStatus NookCommInitializeImpl(bool force_early_process_connect) {
 
 extern "C" {
 
-#if defined(__ANDROID__) && !defined(_WIN32)
+#if defined(__ANDROID__) && !defined(_WIN32) && !defined(NOOK_DISABLE_AGENT_AUTO_INIT)
 __attribute__((constructor(115))) static void NookCommAutoInitialize(void) {
     const std::string process_name = ReadProcessName();
     if (LooksLikeEarlySpawnProcessNameLocal(process_name)) {
@@ -2268,6 +2287,31 @@ void RefreshAgentCallbacksForInternalRpc() {
 #endif
 }
 
+void SetExternalResumeHandler(ExternalResumeHandler handler) {
+#if defined(__ANDROID__) && !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(g_comm_mutex);
+    g_external_resume_handler = std::move(handler);
+#else
+    (void)handler;
+#endif
+}
+
+void ResetExternalResumeHandler() {
+#if defined(__ANDROID__) && !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(g_comm_mutex);
+    g_external_resume_handler = ExternalResumeHandler();
+#endif
+}
+
+bool HasActiveControlChannelConnection() {
+#if defined(__ANDROID__) && !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(g_comm_mutex);
+    return g_agent_connection != nullptr && g_agent_connection->IsConnected();
+#else
+    return false;
+#endif
+}
+
 NookStatus EnsureControlChannelReadyForCurrentProcess() {
 #if defined(__ANDROID__) && !defined(_WIN32)
     const NookStatus comm_status = NookCommInitializeImpl(true);
@@ -2290,6 +2334,109 @@ NookStatus EnsureControlChannelReadyForCurrentProcess() {
                    ReadProcessName().c_str(),
                    static_cast<uint32_t>(getpid()));
     return NOOK_STATUS_OK;
+#else
+    return NOOK_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+NookStatus EnsureOutboundControlChannelReadyForCurrentProcess(const char* host, int port) {
+#if defined(__ANDROID__) && !defined(_WIN32)
+    if (host == nullptr || host[0] == '\0' || port <= 0 || port > 65535) {
+        NOOK_COMM_LOGE("ensure outbound control channel invalid endpoint host=%s port=%d process=%s",
+                       host != nullptr ? host : "",
+                       port,
+                       ReadProcessName().c_str());
+        return NOOK_STATUS_INVALID_ARGUMENT;
+    }
+
+    std::lock_guard<std::mutex> lock(g_comm_mutex);
+    if (g_agent_connection != nullptr) {
+        if (g_agent_connection->IsConnected()) {
+            NOOK_COMM_LOGI("outbound control channel already initialized process=%s",
+                           ReadProcessName().c_str());
+            return NOOK_STATUS_OK;
+        }
+
+        NOOK_COMM_LOGI("outbound control channel resetting stale connection process=%s",
+                       ReadProcessName().c_str());
+        g_agent_connection.reset();
+        g_highest_agent_ready_stage_sent = -1;
+        g_agent_connection_suspended_for_fork = false;
+    }
+
+    auto transport = std::make_unique<nook::comm::TcpTransport>(nook::comm::TcpEndpoint(host, port));
+    auto connection = std::make_unique<nook::comm::AgentConnection>(std::move(transport));
+    if (!connection->Connect()) {
+        NOOK_COMM_LOGE("connect tcp socket failed host=%s port=%d",
+                       host,
+                       port);
+        return NOOK_STATUS_INTERNAL_ERROR;
+    }
+
+    const uint32_t pid = static_cast<uint32_t>(getpid());
+    g_agent_connection = std::move(connection);
+    g_highest_agent_ready_stage_sent = -1;
+    g_agent_connection_suspended_for_fork = false;
+    ApplyAgentCallbacksLocked();
+    ApplySpawnGateResumeHandlerLocked(pid);
+    NOOK_COMM_LOGI("outbound control channel ready host=%s port=%d pid=%u",
+                   host,
+                   port,
+                   pid);
+    return NOOK_STATUS_OK;
+#else
+    (void)host;
+    (void)port;
+    return NOOK_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+NookStatus AdoptInboundControlChannelTransportForCurrentProcess(
+    std::unique_ptr<nook::comm::Transport> transport) {
+#if defined(__ANDROID__) && !defined(_WIN32)
+    if (transport == nullptr) {
+        NOOK_COMM_LOGE("adopt inbound control channel invalid transport process=%s",
+                       ReadProcessName().c_str());
+        return NOOK_STATUS_INVALID_ARGUMENT;
+    }
+
+    std::lock_guard<std::mutex> lock(g_comm_mutex);
+    if (g_agent_connection != nullptr) {
+        if (g_agent_connection->IsConnected()) {
+            NOOK_COMM_LOGI("adopt inbound control channel replacing active connection process=%s",
+                           ReadProcessName().c_str());
+        }
+        g_agent_connection.reset();
+        g_highest_agent_ready_stage_sent = -1;
+        g_agent_connection_suspended_for_fork = false;
+    }
+
+    auto connection = std::make_unique<nook::comm::AgentConnection>(std::move(transport));
+    if (!connection->Connect()) {
+        NOOK_COMM_LOGE("adopt inbound control channel connect failed process=%s",
+                       ReadProcessName().c_str());
+        return NOOK_STATUS_INTERNAL_ERROR;
+    }
+
+    const uint32_t pid = static_cast<uint32_t>(getpid());
+    g_agent_connection = std::move(connection);
+    g_highest_agent_ready_stage_sent = -1;
+    g_agent_connection_suspended_for_fork = false;
+    ApplyAgentCallbacksLocked();
+    ApplySpawnGateResumeHandlerLocked(pid);
+    NOOK_COMM_LOGI("adopt inbound control channel ok process=%s pid=%u",
+                   ReadProcessName().c_str(),
+                   pid);
+    return NOOK_STATUS_OK;
+#else
+    (void)transport;
+    return NOOK_STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+NookStatus NotifyRuntimeReadyToServer() {
+#if defined(__ANDROID__) && !defined(_WIN32)
+    return EnsureRuntimeBridgeAndReady();
 #else
     return NOOK_STATUS_NOT_IMPLEMENTED;
 #endif

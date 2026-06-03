@@ -317,10 +317,10 @@ class Device:
         deadline = time.monotonic() + timeout / 1000.0
         with self._state_cv:
             while True:
-                self._raise_reader_error_locked()
                 message = self._take_script_message(script_id)
                 if message is not None:
                     return message
+                self._raise_reader_error_locked()
                 self._wait_until_deadline_locked(deadline)
 
     def add_script_message_callback(
@@ -366,13 +366,13 @@ class Device:
             self._connection.send_frame(request_frame)
         with self._state_cv:
             while True:
-                self._raise_reader_error_locked()
                 matched = self._take_response_frame_locked(response_type, request_id)
                 if matched is not None:
                     frame, sequence = matched
                     if include_sequence:
                         return frame, sequence
                     return frame
+                self._raise_reader_error_locked()
                 self._wait_until_deadline_locked(deadline, timeout_error_message=timeout_error_message)
 
     def _wait_for_agent_ready(
@@ -387,10 +387,10 @@ class Device:
         deadline = time.monotonic() + timeout / 1000.0
         with self._state_cv:
             while True:
-                self._raise_reader_error_locked()
                 ready = self._take_agent_ready(pid, process_name, min_sequence)
                 if ready is not None:
                     return ready
+                self._raise_reader_error_locked()
                 self._wait_until_deadline_locked(deadline, timeout_error_message=timeout_error_message)
 
     def _handle_incoming_frame(self, frame: Frame) -> None:

@@ -17,7 +17,12 @@ def get_usb_device(
     remote_port: int = 27042,
     timeout_ms: int = 5000,
     serial: Optional[str] = None,
+    remote_abstract: str = "",
 ) -> Device:
-    ensure_adb_forward(local_port=local_port, remote_port=remote_port, serial=serial)
+    ensure_adb_forward(
+        local_port=local_port,
+        remote_port=remote_port,
+        serial=serial,
+        remote_abstract=remote_abstract,
+    )
     return get_device(host="127.0.0.1", port=local_port, timeout_ms=timeout_ms)
-

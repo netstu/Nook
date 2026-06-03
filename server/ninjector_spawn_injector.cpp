@@ -384,8 +384,7 @@ void DumpProcessFdSnapshotForDebug(int pid,
         output << "fd_dir_open_failed path=" << fd_dir_path << "\n";
     } else {
         for (dirent* entry = readdir(dir); entry != nullptr; entry = readdir(dir)) {
-            if (entry->d_name == nullptr ||
-                entry->d_name[0] == '.' ||
+            if (entry->d_name[0] == '.' ||
                 std::strcmp(entry->d_name, ".") == 0 ||
                 std::strcmp(entry->d_name, "..") == 0) {
                 continue;

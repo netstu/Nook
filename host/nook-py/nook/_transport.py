@@ -57,9 +57,21 @@ class TcpConnection:
         self._socket.settimeout(remaining)
 
 
-def ensure_adb_forward(local_port: int, remote_port: int, serial: Optional[str] = None) -> None:
+def ensure_adb_forward(
+    local_port: int,
+    remote_port: Optional[int] = None,
+    serial: Optional[str] = None,
+    remote_abstract: str = "",
+) -> None:
     command = ["adb"]
     if serial:
         command.extend(["-s", serial])
-    command.extend(["forward", f"tcp:{local_port}", f"tcp:{remote_port}"])
+    remote_spec = ""
+    if remote_abstract:
+        remote_spec = f"localabstract:{remote_abstract.lstrip('@')}"
+    else:
+        if remote_port is None:
+            raise ValueError("remote_port is required when remote_abstract is not provided")
+        remote_spec = f"tcp:{remote_port}"
+    command.extend(["forward", f"tcp:{local_port}", remote_spec])
     subprocess.run(command, check=True)

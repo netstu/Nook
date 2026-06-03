@@ -16900,6 +16900,52 @@ void TestProcessEnumerateRangesFindsReadOnlyMappingAfterProtect() {
     JsRuntime::Shutdown();
 }
 
+void TestProcessEnumerateRangesReadFilterAlsoFindsReadWriteMapping() {
+    ScopedTestPageMapping page;
+    assert(page.address() != nullptr);
+
+    std::string error_message;
+    assert(JsRuntime::Initialize(&error_message));
+
+    std::string received_json;
+    std::vector<uint8_t> received_data;
+    JsRuntime::SetSendCallback([&](const std::string& json, const std::vector<uint8_t>& data) {
+        received_json = json;
+        received_data = data;
+        return true;
+    });
+
+    ScriptRegistry registry;
+    uint32_t script_id = 0;
+    const std::string source =
+        "var page = ptr('" + FormatTestPointer(page.address()) + "');"
+        "var ranges = Process.enumerateRanges('r--');"
+        "var match = null;"
+        "for (var i = 0; i !== ranges.length; i++) {"
+        "  if (String(ranges[i].base) === String(page)) {"
+        "    match = ranges[i];"
+        "    break;"
+        "  }"
+        "}"
+        "send({"
+        "  type: 'send',"
+        "  payload: match === null ? 'missing' : String(match.base) + ':' + String(match.size) + ':' + match.protection"
+        "});";
+    assert(registry.CreateScript("process_enumerate_ranges_read_filter_rw.js",
+                                 source.c_str(),
+                                 &script_id,
+                                 &error_message));
+    assert(registry.LoadScript(script_id, &error_message));
+    const std::string expected =
+        std::string("{\"type\":\"send\",\"payload\":\"") +
+        FormatTestPointer(page.address()) + ":" + std::to_string(page.size()) + ":rw-\"}";
+    assert(received_json == expected);
+    assert(received_data.empty());
+
+    registry.Clear();
+    JsRuntime::Shutdown();
+}
+
 void TestProcessFindRangeByAddressBindingExists() {
     std::string error_message;
     assert(JsRuntime::Initialize(&error_message));
@@ -21906,6 +21952,7 @@ int main() {
     TestProcessEnumerateRangesRejectsInvalidProtection();
     TestProcessEnumerateRangesFindsReadWriteMapping();
     TestProcessEnumerateRangesFindsReadOnlyMappingAfterProtect();
+    TestProcessEnumerateRangesReadFilterAlsoFindsReadWriteMapping();
     TestProcessFindRangeByAddressBindingExists();
     TestProcessFindRangeByAddressFindsMapping();
     TestProcessFindRangeByAddressRejectsInvalidPointer();
