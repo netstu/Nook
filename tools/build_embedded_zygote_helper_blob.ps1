@@ -37,7 +37,6 @@ New-Item -ItemType Directory -Force (Split-Path -Parent $headerPath) | Out-Null
 
 $sourceItem = Get-Item $sourcePath
 $sourceHash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
-$sourceName = Split-Path -Leaf $sourcePath
 $bytes = [System.IO.File]::ReadAllBytes($sourcePath)
 $tempHeaderPath = "$headerPath.tmp"
 $lines = New-Object System.Collections.Generic.List[string]
@@ -68,10 +67,11 @@ $lines.Add("#endif")
 $lines.Add("")
 $lines.Add("static constexpr unsigned int kNookEmbeddedZygoteHelperBlobSize = " + $bytes.Length + "u;")
 $lines.Add('static constexpr const char* kNookEmbeddedZygoteHelperSourcePath = "' +
-    (($sourceName -replace '\\', '\\') -replace '"', '\"') + '";')
+    (($sourcePath -replace '\\', '\\') -replace '"', '\"') + '";')
 $lines.Add('static constexpr const char* kNookEmbeddedZygoteHelperSourceSha256 = "' + $sourceHash + '";')
 $lines.Add("static constexpr unsigned int kNookEmbeddedZygoteHelperSourceFileSize = " + $sourceItem.Length + "u;")
-$lines.Add('static constexpr const char* kNookEmbeddedZygoteHelperSourceLastWriteUtc = "";')
+$lines.Add('static constexpr const char* kNookEmbeddedZygoteHelperSourceLastWriteUtc = "' +
+    $sourceItem.LastWriteTimeUtc.ToString("o") + '";')
 $lines.Add("")
 $lines.Add("}  // namespace server")
 $lines.Add("}  // namespace nook")

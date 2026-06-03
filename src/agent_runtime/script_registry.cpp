@@ -2,8 +2,6 @@
 
 #include "agent_runtime/js_runtime.h"
 
-#include <atomic>
-#include <algorithm>
 #include <vector>
 
 namespace nook {
@@ -17,16 +15,7 @@ void SetError(std::string* error_message, const std::string& message) {
     }
 }
 
-std::atomic<uint32_t>& GlobalNextScriptId() {
-    static std::atomic<uint32_t> next_script_id{1u};
-    return next_script_id;
-}
-
 }  // namespace
-
-ScriptRegistry::ScriptRegistry() {
-    scripts_.reserve(64);
-}
 
 bool ScriptRegistry::CreateScript(const std::string& name,
                                   const std::string& source,
@@ -47,12 +36,12 @@ bool ScriptRegistry::CreateScript(const std::string& name,
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    const uint32_t assigned_id = GlobalNextScriptId().fetch_add(1u, std::memory_order_relaxed);
+    const uint32_t assigned_id = next_script_id_++;
     ScriptRecord record;
     record.id = assigned_id;
     record.name = filename;
     record.source = source;
-    scripts_.push_back(std::move(record));
+    scripts_[assigned_id] = record;
     *script_id = assigned_id;
     return true;
 }
@@ -66,20 +55,16 @@ bool ScriptRegistry::LoadScript(uint32_t script_id, std::string* error_message) 
     std::string source;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto it = std::find_if(scripts_.begin(),
-                               scripts_.end(),
-                               [script_id](const ScriptRecord& record) {
-                                   return record.id == script_id;
-                               });
+        auto it = scripts_.find(script_id);
         if (it == scripts_.end()) {
             SetError(error_message, "script not found");
             return false;
         }
-        if (it->loaded) {
+        if (it->second.loaded) {
             return true;
         }
-        filename = it->name;
-        source = it->source;
+        filename = it->second.name;
+        source = it->second.source;
     }
 
     if (!JsRuntime::Evaluate(source, filename, script_id, error_message)) {
@@ -87,16 +72,12 @@ bool ScriptRegistry::LoadScript(uint32_t script_id, std::string* error_message) 
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = std::find_if(scripts_.begin(),
-                           scripts_.end(),
-                           [script_id](const ScriptRecord& record) {
-                               return record.id == script_id;
-                           });
+    auto it = scripts_.find(script_id);
     if (it == scripts_.end()) {
         SetError(error_message, "script not found after execution");
         return false;
     }
-    it->loaded = true;
+    it->second.loaded = true;
     return true;
 }
 
@@ -105,16 +86,11 @@ bool ScriptRegistry::UnloadScript(uint32_t script_id, std::string* error_message
         return false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = std::find_if(scripts_.begin(),
-                           scripts_.end(),
-                           [script_id](const ScriptRecord& record) {
-                               return record.id == script_id;
-                           });
-    if (it == scripts_.end()) {
+    const size_t erased = scripts_.erase(script_id);
+    if (erased == 0) {
         SetError(error_message, "script not found");
         return false;
     }
-    scripts_.erase(it);
     return true;
 }
 
@@ -124,7 +100,7 @@ void ScriptRegistry::Clear() {
         std::lock_guard<std::mutex> lock(mutex_);
         script_ids.reserve(scripts_.size());
         for (const auto& entry : scripts_) {
-            script_ids.push_back(entry.id);
+            script_ids.push_back(entry.first);
         }
         scripts_.clear();
     }

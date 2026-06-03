@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nook-cli"
-version = "0.1.2"
+version = "0.0.1"
 description = "Python CLI for the Nook Android instrumentation server"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"
@@ -22,13 +22,6 @@ Repository = "https://github.com/x1aon1ng/Nook"
 
 [project.scripts]
 nook-cli = "nook.cli:main"
-nook-gadget = "nook.gadget_cli:main"
 
 [tool.setuptools]
-include-package-data = true
-
-[tool.setuptools.packages.find]
-include = ["nook", "nook.*"]
-
-[tool.setuptools.package-data]
-nook = ["dexdump.js", "sodump.js"]
+packages = ["nook"]

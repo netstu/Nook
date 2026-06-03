@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import re
 import sys
 import time
 import threading
@@ -10,10 +9,7 @@ from typing import Callable, Optional, Sequence
 
 from . import __version__
 from .core import get_device, get_usb_device
-from .dexdump import run_dexdump as _run_dexdump
-from .sodump import run_sodump as _run_sodump
 from .output import Console
-from .patchapk import run_patchapk
 
 _KNOWN_SUBCOMMANDS = {
     "apps",
@@ -26,17 +22,12 @@ _KNOWN_SUBCOMMANDS = {
     "post",
     "unload",
     "repl",
-    "patchapk",
-    "gadget",
-    "dexdump",
-    "sodump",
 }
 
 _FRIDA_STYLE_HELP = """Frida-style interactive usage:
 
   nook-cli -U -f com.demo.target -l hook.js
   nook-cli -U com.demo.target -l hook.js
-  nook-cli -U --gadget com.demo.target -l hook.js
   nook-cli -U -n com.demo.target -l hook.js
   nook-cli -U -N com.demo.target -l hook.js
   nook-cli -U -p 4321 -l hook.js
@@ -47,30 +38,6 @@ Experimental spawn routing:
   nook-cli -U -f com.demo.target -l hook.js --symbi
 
 Legacy command-mode usage:
-"""
-
-_PATCHAPK_HELP = """Patch APK usage:
-
-  nook-cli patchapk target.apk -s startup.js
-  nook-cli patchapk target.apk -o target-patched.apk --install --launch --usb
-  nook-cli patchapk target.apk --on-load wait
-  nook-cli patchapk target.apk --interaction connect --connect-host 127.0.0.1 --connect-port 27042
-  nook-cli patchapk target.apk --interaction listen --listen-port 27042
-  nook-cli patchapk target.apk --startup-mode manual
-"""
-
-_DEXDUMP_HELP = """Dex dump usage:
-
-  nook-cli dexdump com.demo.target -U -o .\\dump\\com.demo.target
-  nook-cli dexdump --spawn com.demo.target -U --deep --sleep 3000
-"""
-
-_SODUMP_HELP = """So dump usage:
-
-  nook-cli sodump com.demo.target -U --module libfoo.so
-  nook-cli sodump --spawn com.demo.target -U --module libfoo.so --sleep 3000
-  nook-cli sodump -U --gadget com.demo.target --module libfoo.so
-  nook-cli sodump com.demo.target -U
 """
 
 _SPAWN_SYMBI_MARKER = "--nook-spawn-backend=symbi"
@@ -95,107 +62,17 @@ def _default_device_factory(host: str, port: int, timeout_ms: int):
     return get_device(host=host, port=port, timeout_ms=timeout_ms)
 
 
-def _sanitize_gadget_socket_token(value: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]", "_", value or "")
-
-
-def _derive_gadget_listen_socket_name(target: str) -> str:
-    token = _sanitize_gadget_socket_token(target)
-    return f"nook-gadget-{token}" if token else "nook-gadget"
-
-
-def _derive_usb_gadget_attach_socket_name(args) -> Optional[str]:
-    target = None
-    if args.command == "attach":
-        target = getattr(args, "target", None)
-    elif args.command == "sodump" and not getattr(args, "spawn_package", None):
-        target = getattr(args, "target", None)
-    elif args.command == "repl" and getattr(args, "repl_mode", None) == "attach":
-        target = getattr(args, "target", None)
-    elif args.command == "call" and bool(getattr(args, "attach", False)) and not bool(getattr(args, "spawn", False)):
-        target = getattr(args, "target", None)
-
-    if target is None or isinstance(target, int):
-        return None
-    normalized = str(target).strip()
-    if not normalized or normalized.isdigit():
-        return None
-    return _derive_gadget_listen_socket_name(normalized)
-
-
-def _should_retry_usb_attach_via_gadget(exc: BaseException) -> bool:
-    lowered = (str(exc) or exc.__class__.__name__).lower()
-    return any(marker in lowered for marker in ("socket", "connection refused", "closed", "actively refused"))
-
-
-def _default_usb_device_factory(
-    local_port: int,
-    remote_port: int,
-    timeout_ms: int,
-    serial=None,
-    remote_abstract: str = "",
-):
+def _default_usb_device_factory(local_port: int, remote_port: int, timeout_ms: int, serial=None):
     return get_usb_device(
         local_port=local_port,
         remote_port=remote_port,
         timeout_ms=timeout_ms,
         serial=serial,
-        remote_abstract=remote_abstract,
     )
-
-
-def _build_usb_device_kwargs(args, route: str) -> Optional[dict]:
-    kwargs = {
-        "local_port": args.port,
-        "remote_port": args.port,
-        "timeout_ms": args.timeout,
-        "serial": args.serial,
-    }
-    if route == "gadget":
-        remote_abstract = _derive_usb_gadget_attach_socket_name(args)
-        if not remote_abstract:
-            return None
-        kwargs["remote_abstract"] = remote_abstract
-        return kwargs
-    if route == "tcp":
-        return kwargs
-    return None
-
-
-def _preferred_usb_attach_routes(args) -> list:
-    if not _is_attach_mode(args):
-        return ["tcp"]
-    if getattr(args, "gadget", False):
-        return ["gadget"]
-    if _derive_usb_gadget_attach_socket_name(args):
-        return ["gadget", "tcp"]
-    return ["tcp"]
-
-
-def _next_usb_attach_route(args, current_route: str) -> Optional[str]:
-    routes = _preferred_usb_attach_routes(args)
-    for route in routes:
-        if route != current_route:
-            return route
-    if current_route not in routes and routes:
-        return routes[0]
-    return None
-
-
-def _mark_usb_route(device, route: str) -> None:
-    try:
-        setattr(device, "_nook_usb_route", route)
-    except Exception:
-        return
 
 
 def _add_connection_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("-U", "--usb", action="store_true")
-    parser.add_argument(
-        "--gadget",
-        action="store_true",
-        help="force Gadget listen attach over USB localabstract socket",
-    )
+    parser.add_argument("--usb", action="store_true")
     parser.add_argument("--serial")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=27042)
@@ -219,7 +96,7 @@ class _TopLevelCliParser(argparse.ArgumentParser):
         return self._frida_parser.parse_args(argv, namespace)
 
     def format_help(self) -> str:
-        return _FRIDA_STYLE_HELP + "\n" + _PATCHAPK_HELP + "\n" + _DEXDUMP_HELP + "\n" + _SODUMP_HELP + "\n" + self._legacy_parser.format_help()
+        return _FRIDA_STYLE_HELP + "\n" + self._legacy_parser.format_help()
 
 
 def _build_legacy_parser() -> argparse.ArgumentParser:
@@ -311,139 +188,12 @@ def _build_legacy_parser() -> argparse.ArgumentParser:
     repl_attach.add_argument("-l", "--load", dest="script_path")
     repl_attach.add_argument("--message-timeout", type=int, default=1000)
 
-    patchapk = subparsers.add_parser(
-        "patchapk",
-        help="repackage an APK with nook-gadget",
-        description="Repackage an Android APK with nook-gadget defaults.",
-        epilog=_PATCHAPK_HELP.strip(),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    patchapk.add_argument("input_apk", help="Path to the source APK.")
-    patchapk.add_argument("-o", "--output", dest="output_apk", help="Path to the patched APK output.")
-    patchapk.add_argument("-s", "--startup-script", help="Optional packaged startup script.")
-    patchapk.add_argument("--install", action="store_true", help="Install the patched APK after patch/sign succeeds.")
-    patchapk.add_argument("--launch", action="store_true", help="Launch the app after a successful install.")
-    patchapk.add_argument("--usb", action="store_true", help="Use the default USB adb target.")
-    patchapk.add_argument("--serial", help="Target a specific adb serial.")
-    patchapk.add_argument(
-        "--bootstrap",
-        default="minimal",
-        choices=["minimal", "proxy-loader"],
-        help="Bootstrap strategy for early startup takeover.",
-    )
-    patchapk.add_argument(
-        "--startup-mode",
-        default="auto-start",
-        choices=["auto-start", "manual"],
-        help="Packaged startup-script policy.",
-    )
-    patchapk.add_argument(
-        "--on-load",
-        default="resume",
-        choices=["resume", "wait"],
-        help="Gadget listen on-load policy.",
-    )
-    patchapk.add_argument(
-        "--interaction",
-        default="listen",
-        choices=["listen", "connect"],
-        help="Gadget runtime interaction mode.",
-    )
-    patchapk.add_argument(
-        "--connect-host",
-        default="127.0.0.1",
-        help="Outbound gadget host when --interaction connect is used.",
-    )
-    patchapk.add_argument(
-        "--connect-port",
-        type=int,
-        default=27042,
-        help="Outbound gadget port when --interaction connect is used.",
-    )
-    patchapk.add_argument(
-        "--listen-address",
-        default="",
-        help="Optional listen address when --interaction listen is used.",
-    )
-    patchapk.add_argument(
-        "--listen-port",
-        type=int,
-        default=0,
-        help="Listen port when --interaction listen is used. Defaults to 27042 for top-level listen mode.",
-    )
-    patchapk.add_argument(
-        "--decode-backend",
-        default="apktool",
-        choices=["internal-zip", "apktool"],
-        help="APK decode/rebuild backend.",
-    )
-    patchapk.add_argument("--sign", dest="sign", action="store_true", default=True, help="Enable signing.")
-    patchapk.add_argument("--no-sign", dest="sign", action="store_false", help="Skip signing.")
-
-    gadget = subparsers.add_parser("gadget")
-    gadget.add_argument("gadget_argv", nargs=argparse.REMAINDER)
-
-    dexdump = subparsers.add_parser(
-        "dexdump",
-        help="dump in-memory dex artifacts from a target process",
-        description="Dump in-memory dex artifacts from an attached or spawned target.",
-        epilog=_DEXDUMP_HELP.strip(),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    _add_connection_args(dexdump)
-    dexdump.add_argument("target", nargs="?")
-    dexdump.add_argument("--spawn", dest="spawn_package", help="Spawn the package before scanning.")
-    dexdump.add_argument("-o", "--output", dest="output", help="Output directory for dumped dex files.")
-    dexdump.add_argument("--deep", action="store_true", help="Enable conservative deep scan heuristics.")
-    dexdump.add_argument("--sleep", type=int, default=0, help="Wait N milliseconds after spawn resume before scanning.")
-    dexdump.add_argument("--fix-header", action="store_true", help="Repair dumped dex headers before writing them.")
-    dexdump.add_argument(
-        "--dedupe",
-        default="md5",
-        choices=["md5", "addr"],
-        help="Dedupe dumped dex artifacts by content hash or address.",
-    )
-    dexdump.add_argument("--agent-ready-timeout", type=int, default=10000)
-    dexdump.add_argument("--message-timeout", type=int, default=None)
-    dexdump.add_argument("--max-results", type=int, default=64)
-    dexdump.add_argument("--min-dex-size", type=int, default=0x70)
-    dexdump.add_argument("--max-dex-size", type=int, default=64 * 1024 * 1024)
-    dexdump.add_argument("--scan-window-ranges", type=int, default=4)
-    dexdump.add_argument("--include-system", action="store_true")
-    dexdump.add_argument("--debug", action="store_true")
-    dexdump.add_argument("--force-chunk-scan", action="store_true")
-
-    sodump = subparsers.add_parser(
-        "sodump",
-        help="dump an in-memory shared object from a target process",
-        description="Dump an in-memory shared object from an attached or spawned target.",
-        epilog=_SODUMP_HELP.strip(),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    _add_connection_args(sodump)
-    sodump.add_argument("target", nargs="?")
-    sodump.add_argument("--spawn", dest="spawn_package", help="Spawn the package before dumping.")
-    sodump.add_argument("--module", help="Exact shared object module name to dump. Omit to list modules.")
-    sodump.add_argument("--base-so", help="Original on-disk ELF used to recover a missing PT_DYNAMIC segment.")
-    sodump.add_argument("-o", "--output", dest="output", help="Output directory for dumped shared objects.")
-    sodump.add_argument("--sleep", type=int, default=0, help="Wait N milliseconds after spawn resume before dumping.")
-    sodump.add_argument("--fix", dest="fix", action="store_true", default=True, help="Repair the dumped ELF image.")
-    sodump.add_argument("--no-fix", dest="fix", action="store_false", help="Skip ELF repair.")
-    sodump.add_argument("--agent-ready-timeout", type=int, default=10000)
-    sodump.add_argument("--message-timeout", type=int, default=None)
-    sodump.add_argument("--debug", action="store_true")
-
     return parser
 
 
 def _build_frida_style_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="nook-cli", add_help=True)
     parser.add_argument("-U", "--usb", action="store_true")
-    parser.add_argument(
-        "--gadget",
-        action="store_true",
-        help="force Gadget listen attach over USB localabstract socket",
-    )
     parser.add_argument("--serial")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=27042)
@@ -469,7 +219,6 @@ def _normalize_frida_style_args(parsed) -> argparse.Namespace:
             command="repl",
             repl_mode="spawn",
             usb=parsed.usb,
-            gadget=parsed.gadget,
             serial=parsed.serial,
             host=parsed.host,
             port=parsed.port,
@@ -489,7 +238,6 @@ def _normalize_frida_style_args(parsed) -> argparse.Namespace:
             command="repl",
             repl_mode="attach",
             usb=parsed.usb,
-            gadget=parsed.gadget,
             serial=parsed.serial,
             host=parsed.host,
             port=parsed.port,
@@ -518,122 +266,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return _TopLevelCliParser(legacy_parser, frida_parser)
 
 
-def _run_gadget_cli(argv) -> int:
-    from . import gadget_cli
-
-    return gadget_cli.main(argv)
-
-
-def _derive_patchapk_output_path(input_apk: str) -> str:
-    apk_dir = os.path.dirname(input_apk)
-    apk_name = os.path.basename(input_apk)
-    stem, ext = os.path.splitext(apk_name)
-    return os.path.join(apk_dir, stem + "-nook" + ext)
-
-
-def _normalize_patchapk_args(args) -> SimpleNamespace:
-    interaction = args.interaction
-    listen_port = args.listen_port
-    if interaction == "listen" and listen_port == 0:
-        listen_port = 27042
-    return SimpleNamespace(
-        input_apk=args.input_apk,
-        output_apk=args.output_apk or _derive_patchapk_output_path(args.input_apk),
-        startup_script=getattr(args, "startup_script", None),
-        bootstrap=args.bootstrap,
-        startup_mode=args.startup_mode,
-        on_load=args.on_load,
-        interaction=interaction,
-        connect_host=args.connect_host,
-        connect_port=args.connect_port,
-        listen_address=args.listen_address,
-        listen_port=listen_port,
-        decode_backend=args.decode_backend,
-        sign=bool(args.sign),
-        install=bool(args.install),
-        launch=bool(args.launch),
-        usb=bool(args.usb),
-        serial=getattr(args, "serial", None),
-    )
-
-
-def _run_patchapk(options):
-    return run_patchapk(options)
-
-
-def _normalize_dexdump_args(args):
-    target = getattr(args, "target", None)
-    spawn_package = getattr(args, "spawn_package", None)
-    if not target and not spawn_package:
-        raise ValueError("dexdump requires either <target> or --spawn <package>")
-    if target and spawn_package:
-        raise ValueError("dexdump requires either <target> or --spawn <package>, not both")
-    timeout_ms = int(getattr(args, "timeout", 5000))
-    message_timeout = getattr(args, "message_timeout", None)
-    if message_timeout is None:
-        message_timeout = max(timeout_ms, 60000)
-    max_results = int(getattr(args, "max_results", 64))
-    scan_window_ranges = max(1, int(getattr(args, "scan_window_ranges", 4)))
-    scan_window_max_bytes = None
-    fast_full_scan = True
-    scan_slice_bytes = None
-    isolate_raw_anonymous = None
-    if max_results == 0:
-        scan_window_ranges = min(scan_window_ranges, 8)
-        scan_window_max_bytes = 64 * 1024 * 1024
-        scan_slice_bytes = 8 * 1024 * 1024
-        isolate_raw_anonymous = False
-    return SimpleNamespace(
-        target=target,
-        spawn_package=spawn_package,
-        output_dir=getattr(args, "output", None),
-        deep=bool(getattr(args, "deep", False)),
-        sleep_ms=int(getattr(args, "sleep", 0)),
-        fix_header=bool(getattr(args, "fix_header", False)),
-        dedupe=getattr(args, "dedupe", "md5"),
-        agent_ready_timeout=int(getattr(args, "agent_ready_timeout", 10000)),
-        message_timeout=int(message_timeout),
-        max_results=max_results,
-        min_dex_size=int(getattr(args, "min_dex_size", 0x70)),
-        max_dex_size=int(getattr(args, "max_dex_size", 64 * 1024 * 1024)),
-        scan_window_ranges=scan_window_ranges,
-        scan_window_max_bytes=scan_window_max_bytes,
-        scan_slice_bytes=scan_slice_bytes,
-        isolate_raw_anonymous=isolate_raw_anonymous,
-        fast_full_scan=fast_full_scan,
-        include_system=bool(getattr(args, "include_system", False)),
-        debug=bool(getattr(args, "debug", False)),
-        force_chunk_scan=bool(getattr(args, "force_chunk_scan", False)),
-        json=bool(getattr(args, "json", False)),
-    )
-
-
-def _normalize_sodump_args(args):
-    target = getattr(args, "target", None)
-    spawn_package = getattr(args, "spawn_package", None)
-    if not target and not spawn_package:
-        raise ValueError("sodump requires either <target> or --spawn <package>")
-    if target and spawn_package:
-        raise ValueError("sodump requires either <target> or --spawn <package>, not both")
-    timeout_ms = int(getattr(args, "timeout", 5000))
-    message_timeout = getattr(args, "message_timeout", None)
-    if message_timeout is None:
-        message_timeout = timeout_ms
-    return SimpleNamespace(
-        target=target,
-        spawn_package=spawn_package,
-        module=getattr(args, "module", None),
-        base_so=getattr(args, "base_so", None),
-        output_dir=getattr(args, "output", None),
-        sleep_ms=int(getattr(args, "sleep", 0)),
-        fix=bool(getattr(args, "fix", True)),
-        agent_ready_timeout=int(getattr(args, "agent_ready_timeout", 10000)),
-        message_timeout=int(message_timeout),
-        debug=bool(getattr(args, "debug", False)),
-        json=bool(getattr(args, "json", False)),
-    )
-
-
 def _read_script_source(script_path: str):
     with open(script_path, "r", encoding="utf-8") as handle:
         return handle.read(), os.path.basename(script_path)
@@ -654,29 +286,14 @@ def _format_stage_error(stage: str, exc: BaseException, subject: Optional[str] =
     return f"{stage} failed: {detail}"
 
 
-def _is_script_not_found_error(exc: BaseException) -> bool:
-    detail = (str(exc) or exc.__class__.__name__).lower()
-    return "script not found" in detail
-
-
 def _create_device(args, device_factory, usb_device_factory):
     if args.usb:
-        last_exc = None
-        for route in _preferred_usb_attach_routes(args):
-            kwargs = _build_usb_device_kwargs(args, route)
-            if kwargs is None:
-                continue
-            try:
-                device = usb_device_factory(**kwargs)
-                _mark_usb_route(device, route)
-                return device
-            except Exception as exc:
-                last_exc = exc
-                if not _should_retry_usb_attach_via_gadget(exc):
-                    raise
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError("no usable USB attach route")
+        return usb_device_factory(
+            local_port=args.port,
+            remote_port=args.port,
+            timeout_ms=args.timeout,
+            serial=args.serial,
+        )
     return device_factory(host=args.host, port=args.port, timeout_ms=args.timeout)
 
 
@@ -703,32 +320,9 @@ def _format_connection_guidance(message: str) -> str:
     )
 
 
-def _format_gadget_connection_guidance(message: str, target: Optional[str] = None) -> str:
-    retry_hint = "nook-cli -U --gadget <package> -l hook.js"
-    if target:
-        retry_hint = f"nook-cli -U --gadget {target} -l hook.js"
-    return (
-        f"{message}\n"
-        "nook-cli could not attach to the app's Nook Gadget listen socket.\n"
-        "Ensure the APK was patched in Gadget listen mode, the app is currently running, and the package name matches.\n"
-        f"Then retry with: {retry_hint}"
-    )
-
-
-def _rewrite_connection_error(message: str, args=None) -> str:
+def _rewrite_connection_error(message: str) -> str:
     lowered = message.lower()
     if any(marker in lowered for marker in ("socket", "connection refused", "adb", "device", "closed")):
-        if getattr(args, "gadget", False):
-            target = None
-            if getattr(args, "command", None) == "attach":
-                target = getattr(args, "target", None)
-            elif getattr(args, "command", None) == "repl" and getattr(args, "repl_mode", None) == "attach":
-                target = getattr(args, "target", None)
-            if target is not None and not isinstance(target, int):
-                target = str(target).strip() or None
-            else:
-                target = None
-            return _format_gadget_connection_guidance(message, target=target)
         return _format_connection_guidance(message)
     return message
 
@@ -762,8 +356,6 @@ def _build_spawn_argv(spawn_symbi: bool, strict_zygote_control: bool = False):
 
 def _is_attach_mode(args) -> bool:
     if args.command == "attach":
-        return True
-    if args.command == "sodump" and not getattr(args, "spawn_package", None):
         return True
     if args.command == "repl":
         return getattr(args, "repl_mode", None) == "attach"
@@ -804,54 +396,11 @@ def _attach_session(device, target, console: Optional[Console] = None):
         raise type(exc)(_format_stage_error("attach", exc, str(target))) from exc
 
 
-def _close_device_quietly(device) -> None:
-    close = getattr(device, "close", None)
-    if callable(close):
-        try:
-            close()
-        except Exception:
-            return
-
-
-def _attach_session_with_gadget_fallback(args, device, target, usb_device_factory, console: Optional[Console] = None):
-    try:
-        return device, _attach_session(device, target, console)
-    except Exception as exc:
-        next_route = _next_usb_attach_route(args, getattr(device, "_nook_usb_route", "tcp"))
-        retry_kwargs = _build_usb_device_kwargs(args, next_route) if next_route else None
-        if (
-            not getattr(args, "usb", False)
-            or retry_kwargs is None
-            or not _should_retry_usb_attach_via_gadget(exc)
-        ):
-            raise
-        _close_device_quietly(device)
-        fallback_device = usb_device_factory(**retry_kwargs)
-        _mark_usb_route(fallback_device, next_route)
-        return fallback_device, _attach_session(fallback_device, target, console)
-
-
 def _resume_session(device, pid: int, subject: str):
     try:
         return device.resume(pid)
     except Exception as exc:
         raise type(exc)(_format_stage_error("resume", exc, subject)) from exc
-
-
-def _is_gadget_attach_route(args, device) -> bool:
-    _ = device
-    return bool(getattr(args, "gadget", False))
-
-
-def _resume_gadget_attach_if_needed(args, device, session, console: Optional[Console], subject: str) -> bool:
-    if not _is_gadget_attach_route(args, device):
-        return False
-    if console is not None:
-        console.info("Resuming pid %d..." % session.pid)
-    _resume_session(device, session.pid, subject)
-    if console is not None:
-        console.success("Process resumed")
-    return True
 
 
 def _emit_script_message(stdout, message, use_json: bool, console: Optional[Console] = None) -> None:
@@ -994,8 +543,7 @@ def _repl_cleanup(context, console: Console) -> None:
         context.script.unload()
         console.success("Script unloaded (id: %d)" % context.script_id)
     except Exception as exc:
-        if not _is_script_not_found_error(exc):
-            console.error("script unload failed during repl cleanup: %s" % (str(exc) or exc.__class__.__name__))
+        console.error("script unload failed during repl cleanup: %s" % (str(exc) or exc.__class__.__name__))
     finally:
         _repl_clear_active_script(context)
 
@@ -1097,7 +645,7 @@ def _handle_repl_command(context, command, stdout, stderr, console: Console) -> 
         _emit_rpc_result(stdout, method, result, False, console)
         return True
     if name == "resume":
-        if not context.resume_supported:
+        if context.entry_mode != "spawn":
             console.error("resume is only available for spawn mode")
             return True
         if context.resumed:
@@ -1153,7 +701,7 @@ def _run_repl(context, stdin, stdout, stderr) -> int:
             return 0
 
 
-def _create_repl_context(args, device, console: Console, usb_device_factory=None):
+def _create_repl_context(args, device, console: Console):
     device_name = "USB Device" if getattr(args, "usb", False) else "Local"
     if not getattr(args, "json", False):
         console.print_banner(__version__)
@@ -1183,7 +731,6 @@ def _create_repl_context(args, device, console: Console, usb_device_factory=None
             pending_load=False,
             device_name=device_name,
             console=console,
-            resume_supported=True,
         )
         console.bind_script_origin(device_name, session.process_name)
         if args.script_path:
@@ -1200,13 +747,7 @@ def _create_repl_context(args, device, console: Console, usb_device_factory=None
             console.success("Process resumed")
     else:
         target = int(args.target) if args.target.isdigit() else args.target
-        device, session = _attach_session_with_gadget_fallback(
-            args,
-            device,
-            target,
-            usb_device_factory,
-            console,
-        )
+        session = _attach_session(device, target, console)
         context = SimpleNamespace(
             entry_mode="attach",
             device=device,
@@ -1215,13 +756,12 @@ def _create_repl_context(args, device, console: Console, usb_device_factory=None
             script_id=None,
             script_path=None,
             script_name=None,
-            resumed=not _is_gadget_attach_route(args, device),
+            resumed=True,
             message_timeout_ms=args.message_timeout,
             stop_event=threading.Event(),
             pending_load=False,
             device_name=device_name,
             console=console,
-            resume_supported=_is_gadget_attach_route(args, device),
         )
         console.bind_script_origin(device_name, session.process_name)
         if args.script_path:
@@ -1231,11 +771,6 @@ def _create_repl_context(args, device, console: Console, usb_device_factory=None
             context.script_path = args.script_path
             context.script_name = script.name
             context.pending_load = False
-            if context.resume_supported and not context.resumed:
-                console.info("Resuming pid %d..." % session.pid)
-                _resume_session(device, session.pid, session.process_name)
-                context.resumed = True
-                console.success("Process resumed")
     return context
 
 
@@ -1369,12 +904,6 @@ def _cleanup_wait_script(device, script, script_id, stdout, stderr, use_json: bo
             (console or Console(stdout=stdout, stderr=stderr)).success("Script unloaded (id: %d)" % script_id)
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
-        if _is_script_not_found_error(exc):
-            if not use_json:
-                (console or Console(stdout=stdout, stderr=stderr)).success(
-                    "Script unloaded (id: %d)" % script_id
-                )
-            return
         if use_json:
             _emit_json(stderr, {"ok": False, "error": "script unload failed during wait cleanup: %s" % message})
         else:
@@ -1421,8 +950,6 @@ def main(
         print(parser.format_help(), file=stdout)
         return 0
     args = parser.parse_args(argv)
-    if getattr(args, "command", None) == "gadget":
-        return _run_gadget_cli(getattr(args, "gadget_argv", []))
     try:
         _validate_spawn_backend_flags(args)
     except Exception as exc:
@@ -1435,39 +962,10 @@ def main(
     try:
         if _should_print_banner_for_command(args):
             console.print_banner(__version__)
-        if args.command == "patchapk":
-            _run_patchapk(_normalize_patchapk_args(args))
-            return 0
         device = _create_device(args, device_factory, usb_device_factory)
-        if args.command == "dexdump":
-            _run_dexdump(_normalize_dexdump_args(args), device, stdout=stdout, stderr=stderr)
-            return 0
-        if args.command == "sodump":
-            options = _normalize_sodump_args(args)
-            if getattr(args, "gadget", False) and not getattr(args, "spawn_package", None):
-                target = int(args.target) if str(args.target).isdigit() else args.target
-                device, session = _attach_session_with_gadget_fallback(
-                    args,
-                    device,
-                    target,
-                    usb_device_factory,
-                    None if getattr(args, "json", False) else console,
-                )
-                result = _run_sodump(
-                    options,
-                    device,
-                    stdout=stdout,
-                    stderr=stderr,
-                    session=session,
-                    resume_after_load=True,
-                    resume_subject=str(target),
-                )
-            else:
-                result = _run_sodump(options, device, stdout=stdout, stderr=stderr)
-            return 0 if bool(result.get("ok", True)) else 1
         if _should_use_interactive_subcommand_mode(args):
             repl_args = _make_repl_args_from_subcommand(args)
-            context = _create_repl_context(repl_args, device, console, usb_device_factory=usb_device_factory)
+            context = _create_repl_context(repl_args, device, console)
             return _run_repl(context, stdin=stdin, stdout=stdout, stderr=stderr)
         if args.command == "apps":
             apps = device.enumerate_apps()
@@ -1592,13 +1090,7 @@ def main(
             target = int(args.target) if args.target.isdigit() else args.target
             if not args.json:
                 console.info("Attaching to '%s'..." % target)
-            device, session = _attach_session_with_gadget_fallback(
-                args,
-                device,
-                target,
-                usb_device_factory,
-                None if args.json else console,
-            )
+            session = _attach_session(device, target, None if args.json else console)
             if not args.json:
                 _bind_console_script_origin(console, args.usb, session.process_name)
             if not args.json:
@@ -1617,20 +1109,12 @@ def main(
                 result = script.call(args.call, *_parse_call_args(args.call_args))
                 if not args.json:
                     _emit_rpc_result(stdout, args.call, result, False, console)
-            resumed = _resume_gadget_attach_if_needed(
-                args,
-                device,
-                session,
-                None if args.json else console,
-                session.process_name,
-            )
             if args.json:
                 payload = {
                     "ok": True,
                     "session_id": session.session_id,
                     "pid": session.pid,
                     "process_name": session.process_name,
-                    "resumed": resumed,
                 }
                 if script is not None:
                     payload["script"] = {
@@ -1678,7 +1162,7 @@ def main(
             return 0
 
         if args.command == "repl":
-            context = _create_repl_context(args, device, console, usb_device_factory=usb_device_factory)
+            context = _create_repl_context(args, device, console)
             return _run_repl(context, stdin=stdin, stdout=stdout, stderr=stderr)
 
         if args.command == "call":
@@ -1739,26 +1223,13 @@ def main(
             target = int(args.target) if args.target.isdigit() else args.target
             if not args.json:
                 console.info("Attaching to '%s'..." % target)
-            device, session = _attach_session_with_gadget_fallback(
-                args,
-                device,
-                target,
-                usb_device_factory,
-                None if args.json else console,
-            )
+            session = _attach_session(device, target, None if args.json else console)
             if not args.json:
                 _bind_console_script_origin(console, args.usb, session.process_name)
             if not args.json:
                 console.success("Attached (pid: %d, session: %d)" % (session.pid, session.session_id))
             script, script_id = _load_script(session, args.script_path, None if args.json else console)
             result = script.call(args.method, *_parse_call_args(args.call_args))
-            resumed = _resume_gadget_attach_if_needed(
-                args,
-                device,
-                session,
-                None if args.json else console,
-                session.process_name,
-            )
             if args.json:
                 _emit_json(
                     stdout,
@@ -1768,7 +1239,6 @@ def main(
                         "session_id": session.session_id,
                         "pid": session.pid,
                         "process_name": session.process_name,
-                        "resumed": resumed,
                         "script": {
                             "id": script_id,
                             "name": script.name,
@@ -1899,7 +1369,7 @@ def main(
             console.success("Script unloaded (id: %d)" % script_id)
             return 0
     except Exception as exc:
-        message = _rewrite_connection_error(str(exc) or exc.__class__.__name__, args=args)
+        message = _rewrite_connection_error(str(exc) or exc.__class__.__name__)
         _emit_error(stderr, message, getattr(args, "json", False), console=console)
         return 1
     finally:

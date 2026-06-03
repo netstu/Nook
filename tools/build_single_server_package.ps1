@@ -25,7 +25,6 @@ if (-not (Get-Command $NdkBuild -ErrorAction SilentlyContinue) -and -not (Test-P
 $canonicalOutputDir = Join-Path $repoRoot ("libs\" + $Abi)
 $packageDir = Join-Path $repoRoot ("build\single-server-package\" + $Abi)
 $stagingDir = Join-Path $repoRoot ("build\single-server-staging\" + $Abi)
-$llvmStrip = "E:\SDK\ndk\25.2.9519653\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-strip.exe"
 New-Item -ItemType Directory -Force $packageDir | Out-Null
 New-Item -ItemType Directory -Force $stagingDir | Out-Null
 
@@ -73,32 +72,11 @@ function Copy-CanonicalArtifact {
     return $targetPath
 }
 
-function Strip-Artifact {
-    param(
-        [string]$Path
-    )
-
-    if (-not (Test-Path $Path)) {
-        throw "cannot strip missing artifact: $Path"
-    }
-    if (-not (Test-Path $llvmStrip)) {
-        throw "llvm-strip not found at '$llvmStrip'"
-    }
-
-    & $llvmStrip "--strip-debug" $Path
-    if ($LASTEXITCODE -ne 0) {
-        throw "llvm-strip failed for $Path"
-    }
-    Write-Host ("[strip] {0}" -f $Path)
-}
-
-Invoke-NookNdkBuild -Modules @("nook_agent", "nook_zygote_helper")
+Invoke-NookNdkBuild -Modules @("nook_agent", "nook_ncore", "nook_zygote_helper")
 
 $embeddedAgentSource = Copy-CanonicalArtifact -FileName "libnook-agent.so" -DestinationDirectory $stagingDir
+$embeddedNcoreSource = Copy-CanonicalArtifact -FileName "libncore.so" -DestinationDirectory $stagingDir
 $embeddedZygoteHelperSource = Copy-CanonicalArtifact -FileName "libnook-zygote-helper.so" -DestinationDirectory $stagingDir
-
-Strip-Artifact -Path $embeddedAgentSource
-Strip-Artifact -Path $embeddedZygoteHelperSource
 
 $env:NOOK_EMBEDDED_AGENT_SOURCE = $embeddedAgentSource
 & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "tools\build_embedded_agent_blob.ps1")
@@ -108,24 +86,19 @@ if ($LASTEXITCODE -ne 0) {
 
 $env:NOOK_EMBEDDED_AGENT_SOURCE = $null
 
-$env:NOOK_EMBEDDED_ZYGOTE_HELPER_SOURCE = $embeddedZygoteHelperSource
-& powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "tools\build_embedded_zygote_helper_blob.ps1")
-if ($LASTEXITCODE -ne 0) {
-    throw "embedded zygote helper blob generation failed"
-}
-$env:NOOK_EMBEDDED_ZYGOTE_HELPER_SOURCE = $null
-
-Invoke-NookNdkBuild -Modules @("nook_ncore")
-
-$embeddedNcoreSource = Copy-CanonicalArtifact -FileName "libncore.so" -DestinationDirectory $stagingDir
-Strip-Artifact -Path $embeddedNcoreSource
-
 $env:NOOK_EMBEDDED_NCORE_SOURCE = $embeddedNcoreSource
 & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "tools\build_embedded_ncore_blob.ps1")
 if ($LASTEXITCODE -ne 0) {
     throw "embedded ncore blob generation failed"
 }
 $env:NOOK_EMBEDDED_NCORE_SOURCE = $null
+
+$env:NOOK_EMBEDDED_ZYGOTE_HELPER_SOURCE = $embeddedZygoteHelperSource
+& powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "tools\build_embedded_zygote_helper_blob.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "embedded zygote helper blob generation failed"
+}
+$env:NOOK_EMBEDDED_ZYGOTE_HELPER_SOURCE = $null
 
 Invoke-NookNdkBuild -Modules @("nook_server")
 
@@ -136,7 +109,6 @@ if (-not (Test-Path $serverPath)) {
 
 $packagedServerPath = Join-Path $packageDir "nook-server"
 Copy-Item -LiteralPath $serverPath -Destination $packagedServerPath -Force
-Strip-Artifact -Path $packagedServerPath
 Write-Host ("[copy] {0} -> {1}" -f $serverPath, $packagedServerPath)
 
 @("libnook-agent.so", "libncore.so") | ForEach-Object {

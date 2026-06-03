@@ -2,7 +2,6 @@
 #include "agent_runtime/js_runtime_test_api.h"
 #include "agent_runtime/nook_java_js_bridge.h"
 #include "agent_runtime/nook_native_js_bridge.h"
-#include "gadget/nook_gadget_runtime.h"
 
 #include "../../third_party/quickjs/quickjs-2025-09-13/quickjs.h"
 
@@ -17,8 +16,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
-#include <csetjmp>
-#include <exception>
 #include <cerrno>
 #include <cstring>
 #include <sstream>
@@ -46,10 +43,7 @@
 #if !defined(_WIN32)
 #include <dlfcn.h>
 #include <dirent.h>
-#include <fcntl.h>
 #include <pthread.h>
-#include <signal.h>
-#include <sys/uio.h>
 #include <unwind.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -215,129 +209,6 @@ std::vector<ReadableMappingRecord>& GetReadableMappingSnapshot() {
     return snapshot;
 }
 
-bool IsReadableMemoryRange(uintptr_t address, size_t length);
-bool TryReadMemoryBytesSafely(uint64_t address, size_t size, void* bytes_out);
-
-struct SafeReadSignalState {
-    bool active = false;
-    bool installed = false;
-    sigjmp_buf jump_buffer = {};
-    struct sigaction old_sigbus = {};
-    struct sigaction old_sigsegv = {};
-};
-
-#if defined(_WIN32)
-thread_local SafeReadSignalState g_safe_read_signal_state = {};
-
-SafeReadSignalState& GetSafeReadSignalState() {
-    return g_safe_read_signal_state;
-}
-#else
-pthread_key_t& GetSafeReadSignalStateKey() {
-    static pthread_key_t key = 0;
-    return key;
-}
-
-pthread_once_t& GetSafeReadSignalStateKeyOnce() {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    return once;
-}
-
-void DestroySafeReadSignalState(void* value) {
-    delete static_cast<SafeReadSignalState*>(value);
-}
-
-void InitSafeReadSignalStateKey() {
-    (void)pthread_key_create(&GetSafeReadSignalStateKey(),
-                             &DestroySafeReadSignalState);
-}
-
-SafeReadSignalState& GetSafeReadSignalState() {
-    (void)pthread_once(&GetSafeReadSignalStateKeyOnce(),
-                       &InitSafeReadSignalStateKey);
-    void* value = pthread_getspecific(GetSafeReadSignalStateKey());
-    if (value == nullptr) {
-        auto* state = new SafeReadSignalState();
-        (void)pthread_setspecific(GetSafeReadSignalStateKey(), state);
-        value = state;
-    }
-    return *static_cast<SafeReadSignalState*>(value);
-}
-#endif
-
-#if !defined(_WIN32)
-void SafeReadSignalHandler(int signal_number) {
-    SafeReadSignalState& state = GetSafeReadSignalState();
-    if (!state.active) {
-        signal(signal_number, SIG_DFL);
-        raise(signal_number);
-        return;
-    }
-    siglongjmp(state.jump_buffer, signal_number);
-}
-
-bool InstallSafeReadSignalHandlers(SafeReadSignalState* state) {
-    if (state == nullptr) {
-        return false;
-    }
-    struct sigaction action = {};
-    sigemptyset(&action.sa_mask);
-    action.sa_handler = &SafeReadSignalHandler;
-    action.sa_flags = 0;
-    if (sigaction(SIGBUS, &action, &state->old_sigbus) != 0) {
-        return false;
-    }
-    if (sigaction(SIGSEGV, &action, &state->old_sigsegv) != 0) {
-        (void)sigaction(SIGBUS, &state->old_sigbus, nullptr);
-        return false;
-    }
-    state->installed = true;
-    return true;
-}
-
-void RestoreSafeReadSignalHandlers(SafeReadSignalState* state) {
-    if (state == nullptr || !state->installed) {
-        return;
-    }
-    (void)sigaction(SIGBUS, &state->old_sigbus, nullptr);
-    (void)sigaction(SIGSEGV, &state->old_sigsegv, nullptr);
-    state->installed = false;
-}
-
-bool TryDirectReadWithSignalGuard(uint64_t address,
-                                  size_t size,
-                                  void* bytes_out) {
-    if (bytes_out == nullptr) {
-        return false;
-    }
-    if (!IsReadableMemoryRange(static_cast<uintptr_t>(address), size)) {
-        return false;
-    }
-    SafeReadSignalState& state = GetSafeReadSignalState();
-    if (!InstallSafeReadSignalHandlers(&state)) {
-        return false;
-    }
-
-    state.active = true;
-    const int jump_result = sigsetjmp(state.jump_buffer, 1);
-    if (jump_result == 0) {
-        volatile const uint8_t* source =
-            reinterpret_cast<volatile const uint8_t*>(static_cast<uintptr_t>(address));
-        uint8_t* destination = static_cast<uint8_t*>(bytes_out);
-        for (size_t index = 0; index < size; ++index) {
-            destination[index] = source[index];
-        }
-        state.active = false;
-        RestoreSafeReadSignalHandlers(&state);
-        return true;
-    }
-
-    state.active = false;
-    RestoreSafeReadSignalHandlers(&state);
-    return false;
-}
-#endif
-
 using JavaRegisteredClassSignatureCallbackMap = std::unordered_map<std::string, JSValue>;
 using JavaRegisteredClassMethodCallbackMap =
     std::unordered_map<std::string, JavaRegisteredClassSignatureCallbackMap>;
@@ -347,11 +218,8 @@ constexpr const char* kJavaInvokeNullTypeCandidate = "__nook_null__";
 constexpr const char* kJsRuntimeTag = "NookCommApi";
 #define NOOK_JS_RUNTIME_LOGI(...) \
     ((void)__android_log_print(ANDROID_LOG_INFO, kJsRuntimeTag, __VA_ARGS__))
-#define NOOK_JS_RUNTIME_LOGE(...) \
-    ((void)__android_log_print(ANDROID_LOG_ERROR, kJsRuntimeTag, __VA_ARGS__))
 #else
 #define NOOK_JS_RUNTIME_LOGI(...) ((void)0)
-#define NOOK_JS_RUNTIME_LOGE(...) ((void)0)
 #endif
 
 enum class NativeFunctionValueType : uint32_t {
@@ -2707,10 +2575,7 @@ bool ReadUtf8StringFromReadableMemory(uintptr_t address,
             }
         }
 
-        char ch = '\0';
-        if (!TryReadMemoryBytesSafely(static_cast<uint64_t>(current), sizeof(ch), &ch)) {
-            return false;
-        }
+        const char ch = *(reinterpret_cast<const char*>(current));
         if (ch == '\0') {
             return true;
         }
@@ -3086,25 +2951,9 @@ bool EnumerateNativeMemoryRanges(const std::string& protection_filter,
         return false;
     }
 
-    auto matches_protection_filter = [](const std::string& actual,
-                                        const std::string& filter) -> bool {
-        if (actual.size() != 3u || filter.size() != 3u) {
-            return false;
-        }
-        for (size_t index = 0; index < 3u; ++index) {
-            if (filter[index] == '-') {
-                continue;
-            }
-            if (actual[index] != filter[index]) {
-                return false;
-            }
-        }
-        return true;
-    };
-
     ranges_out->clear();
     for (const NativeMemoryRangeRecord& range : all_ranges) {
-        if (matches_protection_filter(range.protection, protection_filter)) {
+        if (range.protection == protection_filter) {
             ranges_out->push_back(range);
         }
     }
@@ -3908,113 +3757,6 @@ bool CollectModuleImports(const NativeModuleRecord& module,
 #endif
 }
 
-bool TryReadMemoryBytesSafely(uint64_t address, size_t size, void* bytes_out) {
-    if (bytes_out == nullptr) {
-        return false;
-    }
-    if (size == 0u) {
-        return true;
-    }
-
-#if defined(_WIN32)
-    std::memcpy(bytes_out,
-                reinterpret_cast<const void*>(static_cast<uintptr_t>(address)),
-                size);
-    return true;
-#else
-#if defined(SYS_process_vm_readv)
-    {
-        size_t total_read = 0u;
-        const pid_t self_pid = getpid();
-        uint8_t* output_bytes = static_cast<uint8_t*>(bytes_out);
-        while (total_read < size) {
-            struct iovec local_iov = {
-                output_bytes + total_read,
-                size - total_read,
-            };
-            struct iovec remote_iov = {
-                reinterpret_cast<void*>(static_cast<uintptr_t>(address + total_read)),
-                size - total_read,
-            };
-            const ssize_t read_count = static_cast<ssize_t>(
-                syscall(SYS_process_vm_readv,
-                        self_pid,
-                        &local_iov,
-                        1,
-                        &remote_iov,
-                        1,
-                        0));
-            if (read_count <= 0) {
-                break;
-            }
-            total_read += static_cast<size_t>(read_count);
-        }
-        if (total_read == size) {
-            return true;
-        }
-    }
-#endif
-
-    static std::mutex self_mem_mutex;
-    static int self_mem_fd = -2;
-    auto get_self_mem_fd = []() -> int {
-        if (self_mem_fd != -2) {
-            return self_mem_fd;
-        }
-        std::lock_guard<std::mutex> lock(self_mem_mutex);
-        if (self_mem_fd == -2) {
-            self_mem_fd = ::open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
-        }
-        return self_mem_fd;
-    };
-
-    int mem_fd = get_self_mem_fd();
-    if (mem_fd < 0) {
-#if defined(__ANDROID__)
-        // Some Android mappings are advertised as readable in /proc/self/maps
-        // but destabilize the target if we fall back to in-process pointer reads.
-        // Fail closed here so JS-side callers can skip the mapping instead.
-        return false;
-#else
-        return TryDirectReadWithSignalGuard(address, size, bytes_out);
-#endif
-    }
-    size_t total_read = 0u;
-    uint8_t* output_bytes = static_cast<uint8_t*>(bytes_out);
-    while (total_read < size) {
-        ssize_t read_count = ::pread(mem_fd,
-                                     output_bytes + total_read,
-                                     size - total_read,
-                                     static_cast<off_t>(address + total_read));
-        if (read_count <= 0) {
-#if defined(__ANDROID__)
-            return false;
-#else
-            return TryDirectReadWithSignalGuard(address, size, bytes_out);
-#endif
-        }
-        total_read += static_cast<size_t>(read_count);
-    }
-    return true;
-#endif
-}
-
-bool TryReadMemoryRangeSafely(uint64_t address, size_t size, std::vector<uint8_t>* bytes_out) {
-    if (bytes_out == nullptr) {
-        return false;
-    }
-    bytes_out->clear();
-    if (size == 0u) {
-        return true;
-    }
-    bytes_out->resize(size);
-    if (!TryReadMemoryBytesSafely(address, size, bytes_out->data())) {
-        bytes_out->clear();
-        return false;
-    }
-    return true;
-}
-
 bool CollectMemoryScanMatchOffsets(uint64_t address,
                                    uint32_t size,
                                    const std::vector<MemoryScanPatternToken>& tokens,
@@ -4030,11 +3772,7 @@ bool CollectMemoryScanMatchOffsets(uint64_t address,
         return true;
     }
 
-    std::vector<uint8_t> owned_data;
-    if (!TryReadMemoryRangeSafely(address, static_cast<size_t>(size), &owned_data)) {
-        return false;
-    }
-    const uint8_t* data = owned_data.data();
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(address));
     const size_t pattern_size = tokens.size();
     for (size_t offset = 0; offset + pattern_size <= static_cast<size_t>(size); ++offset) {
         bool matched = true;
@@ -6645,12 +6383,8 @@ JSValue JsNativePointerReadByteArray(JSContext* ctx,
         return JS_ThrowTypeError(ctx, "readByteArray unreadable pointer");
     }
 
-    std::vector<uint8_t> bytes;
-    if (!TryReadMemoryRangeSafely(value, static_cast<size_t>(length), &bytes)) {
-        return JS_ThrowInternalError(ctx, "readByteArray failed to read range");
-    }
-
-    return JS_NewArrayBufferCopy(ctx, bytes.data(), bytes.size());
+    return JS_NewArrayBufferCopy(
+        ctx, reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(value)), length);
 }
 
 JSValue JsNativePointerWriteByteArray(JSContext* ctx,
@@ -8732,10 +8466,7 @@ bool CaptureNativeHookInvocationMutations(JSContext* ctx,
     return true;
 }
 
-bool SendJsonToHost(JSContext* ctx,
-                    JSValueConst value,
-                    const char* error_prefix,
-                    const std::vector<uint8_t>& data = {});
+bool SendJsonToHost(JSContext* ctx, JSValueConst value, const char* error_prefix);
 JSValue JsNativeHookListenerDetach(JSContext* ctx,
                                    JSValueConst this_val,
                                    int argc,
@@ -8772,18 +8503,10 @@ void EnqueueWeakBindingLocked(RuntimeState& state, uint64_t binding_id) {
     state.pending_weak_binding_ids.push_back(binding_id);
 }
 
-void RefreshQuickJsStackTopForCurrentThread(JSRuntime* runtime) {
-    if (runtime == nullptr) {
-        return;
-    }
-    JS_UpdateStackTop(runtime);
-}
-
 bool ExecutePendingJobsLocked(RuntimeState& state, std::string* error_message) {
     if (state.runtime == nullptr) {
         return true;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
     for (;;) {
         JSContext* job_ctx = nullptr;
         const int status = JS_ExecutePendingJob(state.runtime, &job_ctx);
@@ -9286,79 +9009,51 @@ JSValue JsNativePointerRead(JSContext* ctx,
     switch (magic) {
         case 0: {
             uintptr_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return MakeNativePointer(ctx, static_cast<uint64_t>(value));
         }
-        case 1: {
-            uint8_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
-            return JS_NewUint32(ctx, static_cast<uint32_t>(value));
-        }
-        case 5: {
-            int8_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
-            return JS_NewInt32(ctx, static_cast<int32_t>(value));
-        }
+        case 1:
+            return JS_NewUint32(ctx, static_cast<uint32_t>(*address));
+        case 5:
+            return JS_NewInt32(ctx, static_cast<int32_t>(*reinterpret_cast<const int8_t*>(address)));
         case 2: {
             uint16_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return JS_NewUint32(ctx, static_cast<uint32_t>(value));
         }
         case 6: {
             int16_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return JS_NewInt32(ctx, static_cast<int32_t>(value));
         }
         case 3: {
             uint32_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return JS_NewUint32(ctx, value);
         }
         case 7: {
             int32_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return JS_NewInt32(ctx, value);
         }
         case 4: {
             uint64_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return MakeInteger64Object(ctx, value, false);
         }
         case 8: {
             int64_t value = 0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return MakeInteger64Object(ctx, static_cast<uint64_t>(value), true);
         }
         case 9: {
             float value = 0.0f;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return JS_NewFloat64(ctx, static_cast<double>(value));
         }
         case 10: {
             double value = 0.0;
-            if (!TryReadMemoryBytesSafely(pointer_value, sizeof(value), &value)) {
-                return JS_ThrowTypeError(ctx, "NativePointer read unreadable pointer");
-            }
+            std::memcpy(&value, address, sizeof(value));
             return JS_NewFloat64(ctx, value);
         }
         default:
@@ -9821,7 +9516,7 @@ JSValue JsMemoryScanSync(JSContext* ctx, JSValueConst this_val, int argc, JSValu
     std::vector<uint32_t> offsets;
     if (!CollectMemoryScanMatchOffsets(address, size, tokens, &offsets)) {
         JS_FreeValue(ctx, matches);
-        return JS_ThrowInternalError(ctx, "Memory.scanSync failed to read range");
+        return JS_EXCEPTION;
     }
 
     const size_t pattern_size = tokens.size();
@@ -9918,7 +9613,7 @@ JSValue JsMemoryScan(JSContext* ctx, JSValueConst this_val, int argc, JSValueCon
         JS_FreeValue(ctx, on_match);
         JS_FreeValue(ctx, on_error);
         JS_FreeValue(ctx, on_complete);
-        return JS_ThrowInternalError(ctx, "Memory.scan failed to read range");
+        return JS_EXCEPTION;
     }
 
     const uint32_t pattern_size = static_cast<uint32_t>(tokens.size());
@@ -10647,10 +10342,7 @@ JSValue JsNativeHookListenerDetach(JSContext* ctx,
     return DetachNativeHookForCurrentScript(ctx, state, hook_id);
 }
 
-bool SendJsonToHost(JSContext* ctx,
-                    JSValueConst value,
-                    const char* error_prefix,
-                    const std::vector<uint8_t>& data) {
+bool SendJsonToHost(JSContext* ctx, JSValueConst value, const char* error_prefix) {
     JSValue json = JS_JSONStringify(ctx, value, JS_UNDEFINED, JS_UNDEFINED);
     if (JS_IsException(json)) {
         return false;
@@ -10684,7 +10376,7 @@ bool SendJsonToHost(JSContext* ctx,
                error_prefix != nullptr ? error_prefix : "(null)",
                json_string.c_str());
 
-    if (!callback(json_string, data)) {
+    if (!callback(json_string, {})) {
         JS_ThrowInternalError(ctx, "send callback failed");
         return false;
     }
@@ -10870,17 +10562,11 @@ JSValue JsSend(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* ar
     if (argc < 1) {
         return JS_ThrowTypeError(ctx, "send requires a message argument");
     }
-    std::vector<uint8_t> binary_payload;
     if (argc >= 2 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
-        size_t payload_size = 0u;
-        uint8_t* payload_data = JS_GetArrayBuffer(ctx, &payload_size, argv[1]);
-        if (payload_data == nullptr) {
-            return JS_ThrowTypeError(ctx, "send binary payload must be an ArrayBuffer");
-        }
-        binary_payload.assign(payload_data, payload_data + payload_size);
+        return JS_ThrowInternalError(ctx, "send binary payload not implemented");
     }
 
-    if (!SendJsonToHost(ctx, argv[0], "send", binary_payload)) {
+    if (!SendJsonToHost(ctx, argv[0], "send")) {
         return JS_EXCEPTION;
     }
 
@@ -13010,9 +12696,6 @@ JSValue JsJavaIsClassLoaderReady(JSContext* ctx, JSValueConst this_val, int argc
     (void)argc;
     (void)argv;
 #if defined(__ANDROID__)
-    if (nook::gadget::ShouldDeferJavaReadyChecksForOnLoadWait()) {
-        return JS_FALSE;
-    }
     std::string error_message;
     if (!EnsureJavaHookReadyForJs(&error_message)) {
         return JS_ThrowInternalError(ctx, "%s", error_message.c_str());
@@ -13035,9 +12718,6 @@ JSValue JsJavaIsApplicationReady(JSContext* ctx, JSValueConst this_val, int argc
     (void)argc;
     (void)argv;
 #if defined(__ANDROID__)
-    if (nook::gadget::ShouldDeferJavaReadyChecksForOnLoadWait()) {
-        return JS_FALSE;
-    }
     std::string error_message;
     if (!EnsureJavaHookReadyForJs(&error_message)) {
         return JS_ThrowInternalError(ctx, "%s", error_message.c_str());
@@ -13060,9 +12740,6 @@ JSValue JsJavaIsLifecycleReady(JSContext* ctx, JSValueConst this_val, int argc, 
     (void)argc;
     (void)argv;
 #if defined(__ANDROID__)
-    if (nook::gadget::ShouldDeferJavaReadyChecksForOnLoadWait()) {
-        return JS_FALSE;
-    }
     std::string error_message;
     if (!EnsureJavaHookReadyForJs(&error_message)) {
         return JS_ThrowInternalError(ctx, "%s", error_message.c_str());
@@ -19582,6 +19259,7 @@ bool InstallGlobalBindingsLocked(JSContext* ctx, std::string* error_message) {
     script_pin = JS_UNDEFINED;
     script_unpin = JS_UNDEFINED;
     script_run_gc_for_testing = JS_UNDEFINED;
+
     java = JS_NewObject(ctx);
     java_vm = JS_NewObject(ctx);
     java_perform = JS_NewCFunction(ctx, JsJavaPerform, "perform", 1);
@@ -20264,7 +19942,6 @@ bool DispatchJavaReadyCallbacksLocked(RuntimeState& state, std::string* error_me
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
 
     JSValue global = JS_GetGlobalObject(state.context);
     if (JS_IsException(global)) {
@@ -20316,7 +19993,6 @@ bool DropJavaReadyCallbacksForScriptLocked(RuntimeState& state,
     if (state.context == nullptr) {
         return true;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
 
     JSValue global = JS_GetGlobalObject(state.context);
     if (JS_IsException(global)) {
@@ -20378,7 +20054,6 @@ bool EvaluateInternalLocked(JSContext* ctx,
                             const std::string& filename,
                             bool compile_only,
                             std::string* error_message) {
-    RefreshQuickJsStackTopForCurrentThread(JS_GetRuntime(ctx));
     const int eval_flags = GetEvalFlags(source);
     JSValue result = JS_Eval(ctx,
                              source.c_str(),
@@ -20412,117 +20087,77 @@ bool JsRuntime::Initialize(std::string* error_message) {
     if (state.runtime != nullptr && state.context != nullptr) {
         return true;
     }
-    const char* stage = "begin";
-    try {
-        stage = "JS_NewRuntime";
-        state.runtime = JS_NewRuntime();
-        if (state.runtime == nullptr) {
-            SetError(error_message, "JS_NewRuntime failed");
-            return false;
-        }
 
-        stage = "JS_NewContext";
-        state.context = JS_NewContext(state.runtime);
-        if (state.context == nullptr) {
-            JS_FreeRuntime(state.runtime);
-            state.runtime = nullptr;
-            SetError(error_message, "JS_NewContext failed");
-            return false;
-        }
-
-        stage = "InstallGlobalBindingsLocked";
-        InvalidateDebugSymbolCacheLocked(state);
-        if (!InstallGlobalBindingsLocked(state.context, error_message)) {
-            JS_FreeContext(state.context);
-            JS_FreeRuntime(state.runtime);
-            state.context = nullptr;
-            state.runtime = nullptr;
-            return false;
-        }
-
-        stage = "SetJavaJsHookInvocationDispatcher";
-        SetJavaJsHookInvocationDispatcher(&DispatchJavaHookInvocationToRuntime);
-        state.stop_timer_thread = false;
-        state.timer_thread_running = true;
-
-        stage = "timer_thread";
-        state.timer_thread = std::thread([]() {
-            RuntimeState& state = GetRuntimeState();
-            std::unique_lock<std::recursive_mutex> lock(state.runtime_mutex);
-            while (!state.stop_timer_thread) {
-                if (state.context == nullptr) {
-                    state.timer_cv.wait(lock, [&]() {
-                        return state.stop_timer_thread || state.context != nullptr;
-                    });
-                    continue;
-                }
-
-                auto now = std::chrono::steady_clock::now();
-                bool found_due = false;
-                std::chrono::steady_clock::time_point next_due = {};
-                for (const auto& entry : state.timers) {
-                    const RuntimeState::TimerRecord& record = entry.second;
-                    if (record.canceled || record.due_at <= now) {
-                        found_due = true;
-                        break;
-                    }
-                    if (next_due == std::chrono::steady_clock::time_point{} || record.due_at < next_due) {
-                        next_due = record.due_at;
-                    }
-                }
-
-                if (found_due) {
-                    std::string ignored_error;
-                    (void)DrainDueTimersLocked(state, &ignored_error);
-                    (void)ExecutePendingJobsLocked(state, &ignored_error);
-                    continue;
-                }
-
-                if (next_due == std::chrono::steady_clock::time_point{}) {
-                    state.timer_cv.wait(lock, [&]() {
-                        return state.stop_timer_thread || !state.timers.empty();
-                    });
-                } else {
-                    state.timer_cv.wait_until(lock, next_due, [&]() {
-                        return state.stop_timer_thread;
-                    });
-                }
-            }
-            state.timer_thread_running = false;
-        });
-        return true;
-    } catch (const std::exception& exception) {
-        NOOK_JS_RUNTIME_LOGE("js runtime initialize exception stage=%s error=%s",
-                             stage,
-                             exception.what());
-        if (state.context != nullptr) {
-            JS_FreeContext(state.context);
-            state.context = nullptr;
-        }
-        if (state.runtime != nullptr) {
-            JS_FreeRuntime(state.runtime);
-            state.runtime = nullptr;
-        }
-        SetError(error_message,
-                 std::string("js runtime initialize exception at stage=") + stage +
-                     ": " + exception.what());
-        return false;
-    } catch (...) {
-        NOOK_JS_RUNTIME_LOGE("js runtime initialize exception stage=%s error=unknown",
-                             stage);
-        if (state.context != nullptr) {
-            JS_FreeContext(state.context);
-            state.context = nullptr;
-        }
-        if (state.runtime != nullptr) {
-            JS_FreeRuntime(state.runtime);
-            state.runtime = nullptr;
-        }
-        SetError(error_message,
-                 std::string("js runtime initialize exception at stage=") + stage +
-                     ": unknown");
+    state.runtime = JS_NewRuntime();
+    if (state.runtime == nullptr) {
+        SetError(error_message, "JS_NewRuntime failed");
         return false;
     }
+    state.context = JS_NewContext(state.runtime);
+    if (state.context == nullptr) {
+        JS_FreeRuntime(state.runtime);
+        state.runtime = nullptr;
+        SetError(error_message, "JS_NewContext failed");
+        return false;
+    }
+
+    InvalidateDebugSymbolCacheLocked(state);
+    if (!InstallGlobalBindingsLocked(state.context, error_message)) {
+        JS_FreeContext(state.context);
+        JS_FreeRuntime(state.runtime);
+        state.context = nullptr;
+        state.runtime = nullptr;
+        return false;
+    }
+
+    SetJavaJsHookInvocationDispatcher(&DispatchJavaHookInvocationToRuntime);
+    state.stop_timer_thread = false;
+    state.timer_thread_running = true;
+    state.timer_thread = std::thread([]() {
+        RuntimeState& state = GetRuntimeState();
+        std::unique_lock<std::recursive_mutex> lock(state.runtime_mutex);
+        while (!state.stop_timer_thread) {
+            if (state.context == nullptr) {
+                state.timer_cv.wait(lock, [&]() {
+                    return state.stop_timer_thread || state.context != nullptr;
+                });
+                continue;
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            bool found_due = false;
+            std::chrono::steady_clock::time_point next_due = {};
+            for (const auto& entry : state.timers) {
+                const RuntimeState::TimerRecord& record = entry.second;
+                if (record.canceled || record.due_at <= now) {
+                    found_due = true;
+                    break;
+                }
+                if (next_due == std::chrono::steady_clock::time_point{} || record.due_at < next_due) {
+                    next_due = record.due_at;
+                }
+            }
+
+            if (found_due) {
+                std::string ignored_error;
+                (void)DrainDueTimersLocked(state, &ignored_error);
+                (void)ExecutePendingJobsLocked(state, &ignored_error);
+                continue;
+            }
+
+            if (next_due == std::chrono::steady_clock::time_point{}) {
+                state.timer_cv.wait(lock, [&]() {
+                    return state.stop_timer_thread || !state.timers.empty();
+                });
+            } else {
+                state.timer_cv.wait_until(lock, next_due, [&]() {
+                    return state.stop_timer_thread;
+                });
+            }
+        }
+        state.timer_thread_running = false;
+    });
+    return true;
 }
 
 void JsRuntime::Shutdown() {
@@ -20789,7 +20424,6 @@ bool JsRuntime::RemoveMessageHandler(uint32_t script_id, std::string* error_mess
     RuntimeState& state = GetRuntimeState();
     std::vector<uint32_t> deferred_java_hook_ids;
     std::unique_lock<std::recursive_mutex> lock(state.runtime_mutex);
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
     if (state.context == nullptr) {
         std::string ignored_error;
         (void)UninstallReplaceHooksForScriptLocked(state, script_id, &ignored_error);
@@ -20860,7 +20494,6 @@ bool JsRuntime::ValidateScript(const std::string& source,
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
     return EvaluateInternalLocked(state.context, source, filename, true, error_message);
 }
 
@@ -20874,7 +20507,6 @@ bool JsRuntime::Evaluate(const std::string& source,
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
     if (!ResetRpcExportsObjectLocked(state.context, error_message)) {
         return false;
     }
@@ -20898,7 +20530,6 @@ bool JsRuntime::DispatchJavaReadyCallbacks(std::string* error_message) {
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
     if (!DispatchJavaReadyCallbacksLocked(state, error_message)) {
         return false;
     }
@@ -20912,7 +20543,6 @@ bool JsRuntime::PumpPendingTasks(std::string* error_message) {
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
     return DrainWeakBindingMaintenanceLocked(state, error_message);
 }
 
@@ -20927,7 +20557,6 @@ bool JsRuntime::CallRpc(uint32_t script_id,
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
 
     auto script_it = state.rpc_exports.find(script_id);
     if (script_it == state.rpc_exports.end()) {
@@ -21267,7 +20896,6 @@ bool DispatchJavaHookInvocationToRuntime(uint32_t hook_id,
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
 
     uint32_t script_id = 0u;
     for (const auto& script_entry : state.java_hook_callbacks) {
@@ -21302,7 +20930,6 @@ bool DispatchJavaRegisteredClassInvocationToRuntime(uint32_t callback_id,
         SetError(error_message, "runtime not initialized");
         return false;
     }
-    RefreshQuickJsStackTopForCurrentThread(state.runtime);
 
     uint32_t script_id = 0u;
     for (const auto& script_entry : state.java_registered_class_callbacks) {

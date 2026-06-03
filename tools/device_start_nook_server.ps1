@@ -51,20 +51,6 @@ function Invoke-AdbCapture {
     return ($output | Out-String).TrimEnd()
 }
 
-function Invoke-AdbAllowFailure {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string[]]$Arguments
-    )
-
-    $output = & adb @adbBaseArgs @Arguments 2>&1
-    return [PSCustomObject]@{
-        ExitCode = $LASTEXITCODE
-        Output = ($output | Out-String).TrimEnd()
-        Command = ($Arguments -join ' ')
-    }
-}
-
 function Invoke-RootShellCapture {
     param(
         [Parameter(Mandatory = $true)]
@@ -99,7 +85,6 @@ am force-stop com.ad2001.frida0x1 >/dev/null 2>&1 || true
 
 $localItem = Get-Item $LocalServer
 $localHash = (Get-FileHash -LiteralPath $LocalServer -Algorithm SHA256).Hash.ToLowerInvariant()
-$remoteStagePath = "/data/local/tmp/nook-server.push.tmp"
 
 Write-Host "[nook] local=$($localItem.FullName)"
 Write-Host "[nook] local_sha256=$localHash"
@@ -110,21 +95,14 @@ Stop-NookServers -RemoteRoot $RemotePath
 Start-Sleep -Seconds 1
 
 if (-not $SkipPush) {
-    Invoke-Adb -Arguments @("push", $LocalServer, $remoteStagePath)
-    Invoke-RootShellCapture -Command "mkdir -p $RuntimeDir; cp $remoteStagePath $RemotePath; chmod 755 $RemotePath; rm -f $remoteStagePath" | Out-Null
+    Invoke-Adb -Arguments @("push", $LocalServer, $RemotePath)
 }
 
 $remoteMeta = Invoke-RootShellCapture -Command "chmod 755 $RemotePath; sha256sum $RemotePath; wc -c $RemotePath; ls -l $RemotePath"
 Write-Host $remoteMeta
 
 if (-not $SkipLogcatClear) {
-    $logcatClear = Invoke-AdbAllowFailure -Arguments @("logcat", "-c")
-    if ($logcatClear.ExitCode -ne 0) {
-        Write-Warning "[nook] logcat clear failed but startup will continue: $($logcatClear.Command)"
-        if (-not [string]::IsNullOrWhiteSpace($logcatClear.Output)) {
-            Write-Warning $logcatClear.Output
-        }
-    }
+    Invoke-Adb -Arguments @("logcat", "-c")
 }
 
 $launchFlags = @()
@@ -137,24 +115,14 @@ Invoke-RootShellCapture -Command $launchCommand | Out-Null
 
 Start-Sleep -Seconds 2
 
-$serverState = Invoke-RootShellCapture -Command "echo ====ERR====; if [ -f $RuntimeDir/server.err ]; then cat $RuntimeDir/server.err; fi; echo ====OUT====; if [ -f $RuntimeDir/server.out ]; then cat $RuntimeDir/server.out; fi; echo ====PS====; ps -A -o PID,PPID,USER,NAME,ARGS | grep nook-server"
+$serverState = Invoke-RootShellCapture -Command "cat $RuntimeDir/server.err; echo ----; cat $RuntimeDir/server.out; echo ----; ps -A -o PID,PPID,USER,NAME,ARGS | grep nook-server"
 Write-Host $serverState
 
-$logcatDump = Invoke-AdbAllowFailure -Arguments @("logcat", "-d")
-$startupLines = @()
-if ($logcatDump.ExitCode -eq 0) {
-    $startupLines = $logcatDump.Output |
-        Select-String -Pattern "NookServer|NookCommApi|NookZygote" |
-        Select-Object -ExpandProperty Line
-}
+$startupLines = Invoke-AdbCapture -Arguments @("logcat", "-d") |
+    Select-String -Pattern "NookServer|NookCommApi|NookZygote" |
+    Select-Object -ExpandProperty Line
 
 if (-not $startupLines) {
-    if ($logcatDump.ExitCode -ne 0) {
-        Write-Warning "[nook] logcat dump failed: $($logcatDump.Command)"
-        if (-not [string]::IsNullOrWhiteSpace($logcatDump.Output)) {
-            Write-Warning $logcatDump.Output
-        }
-    }
     throw "no Nook startup logs captured"
 }
 

@@ -9,9 +9,6 @@ class PackagingMetadataTests(unittest.TestCase):
 
         self.assertIn('name = "nook-cli"', content)
         self.assertIn('nook-cli = "nook.cli:main"', content)
-        self.assertIn('nook-gadget = "nook.gadget_cli:main"', content)
-        self.assertIn('include = ["nook", "nook.*"]', content)
-        self.assertIn('nook = ["dexdump.js", "sodump.js"]', content)
         self.assertIn('Homepage = "https://github.com/x1aon1ng/Nook"', content)
         self.assertIn('email = "3049155267@qq.com"', content)
 

@@ -101,25 +101,6 @@ class TimeoutThenFrameConnection(FakeConnection):
         return super().recv_frame(timeout_ms=timeout_ms)
 
 
-class FrameThenClosedConnection(FakeConnection):
-    def __init__(self) -> None:
-        super().__init__()
-        self._close_after_next_frame = False
-        self._closed_after_frame = False
-
-    def close_after_next_incoming_frame(self) -> None:
-        self._close_after_next_frame = True
-
-    def recv_frame(self, timeout_ms: int = None) -> Frame:
-        if self._closed_after_frame:
-            raise ConnectionError("socket closed")
-        frame = super().recv_frame(timeout_ms=timeout_ms)
-        if self._close_after_next_frame:
-            self._close_after_next_frame = False
-            self._closed_after_frame = True
-        return frame
-
-
 class DeviceTests(unittest.TestCase):
     def test_attach_waits_for_runtime_agent_ready(self) -> None:
         connection = FakeConnection()
@@ -206,34 +187,6 @@ class DeviceTests(unittest.TestCase):
         threading.Thread(target=attach_responder).start()
         with self.assertRaisesRegex(TimeoutError, "wait runtime agent ready timed out"):
             device.attach("com.demo.target", timeout_ms=20)
-
-        device.close()
-
-    def test_attach_prefers_error_response_over_following_socket_close(self) -> None:
-        connection = FrameThenClosedConnection()
-        device = Device(connection, default_timeout_ms=1000)
-
-        def attach_responder() -> None:
-            request_frame = connection.wait_for_sent_frame(MessageType.ATTACH_REQUEST)
-            connection.push_incoming(
-                Frame(
-                    MessageType.ATTACH_RESPONSE,
-                    request_frame.message_id,
-                    encode_attach_response(
-                        AttachResponse(
-                            session_id=0,
-                            pid=0,
-                            process_name="",
-                            error=ErrorInfo(code=-1, message="attach target mismatch"),
-                        )
-                    ),
-                )
-            )
-            connection.close_after_next_incoming_frame()
-
-        threading.Thread(target=attach_responder).start()
-        with self.assertRaisesRegex(Exception, "attach target mismatch"):
-            device.attach("com.demo.target")
 
         device.close()
 

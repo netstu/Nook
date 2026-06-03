@@ -13,12 +13,8 @@ NOOK_COMMON_INCLUDES += $(ROOT_PATH)/third_party/xdl
 
 NOOK_QUICKJS_CONFIG_HEADER := $(ROOT_PATH)/third_party/quickjs/quickjs-2025-09-13/nook_quickjs_config.h
 
-NOOK_REPRO_FLAGS := -ffile-prefix-map=$(CURDIR)=/nook
-NOOK_REPRO_FLAGS += -fdebug-prefix-map=$(CURDIR)=/nook
-NOOK_REPRO_FLAGS += -fmacro-prefix-map=$(CURDIR)=/nook
-
-NOOK_COMMON_CPPFLAGS := -std=c++17 -fPIC $(NOOK_REPRO_FLAGS)
-NOOK_COMMON_CFLAGS := -std=c11 -fPIC -fwrapv -include $(NOOK_QUICKJS_CONFIG_HEADER) $(NOOK_REPRO_FLAGS)
+NOOK_COMMON_CPPFLAGS := -std=c++17 -fPIC
+NOOK_COMMON_CFLAGS := -std=c11 -fPIC -fwrapv -include $(NOOK_QUICKJS_CONFIG_HEADER)
 
 # Communication module sources
 NOOK_COMM_SRC := \
@@ -85,9 +81,6 @@ NOOK_AGENT_RUNTIME_SRC := \
     ../../src/agent_runtime/nook_script_runtime_bridge.cpp \
     $(NOOK_QUICKJS_SRC)
 
-NOOK_GADGET_RUNTIME_STUB_SRC := \
-    ../../src/gadget/nook_gadget_runtime_stub.cpp
-
 NOOK_RUNTIME_SRC := \
     ../../src/framework/Nook.cpp \
     ../../src/framework/NookComm.cpp \
@@ -109,8 +102,7 @@ NOOK_RUNTIME_SRC := \
     ../../src/common/JavaHookLog.cpp \
     ../../src/common/ArtStructDetector.cpp \
     $(NOOK_JAVA_ROUTER_SRC) \
-    $(NOOK_XDL_SRC) \
-    $(NOOK_GADGET_RUNTIME_STUB_SRC)
+    $(NOOK_XDL_SRC)
 
 NOOK_AGENT_SRC := \
     ../../src/framework/Nook.cpp \
@@ -133,15 +125,7 @@ NOOK_AGENT_SRC := \
     ../../src/common/JavaHookLog.cpp \
     ../../src/common/ArtStructDetector.cpp \
     $(NOOK_JAVA_ROUTER_SRC) \
-    $(NOOK_XDL_SRC) \
-    $(NOOK_GADGET_RUNTIME_STUB_SRC)
-
-NOOK_GADGET_SRC := \
-    $(filter-out $(NOOK_GADGET_RUNTIME_STUB_SRC),$(NOOK_AGENT_SRC)) \
-    ../../src/gadget/nook_gadget_config.cpp \
-    ../../src/gadget/nook_gadget_direct_listener.cpp \
-    ../../src/gadget/nook_gadget_runtime.cpp \
-    ../../src/gadget/nook_gadget_entry.cpp
+    $(NOOK_XDL_SRC)
 
 NOOK_ZYGOTE_HELPER_SRC := \
     ../../src/framework/Nook.cpp \
@@ -163,8 +147,7 @@ NOOK_ZYGOTE_HELPER_SRC := \
     ../../src/common/JavaHookLog.cpp \
     ../../src/common/ArtStructDetector.cpp \
     $(NOOK_JAVA_ROUTER_SRC) \
-    $(NOOK_XDL_SRC) \
-    $(NOOK_GADGET_RUNTIME_STUB_SRC)
+    $(NOOK_XDL_SRC)
 
 NOOK_SERVER_SRC := \
     ../../server/embedded_blob_defs.cpp \
@@ -240,23 +223,6 @@ include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := nook_gadget
-LOCAL_MODULE_FILENAME := libnook-gadget
-
-LOCAL_C_INCLUDES := $(NOOK_COMMON_INCLUDES)
-LOCAL_SRC_FILES := $(NOOK_GADGET_SRC)
-
-LOCAL_CPPFLAGS := $(NOOK_COMMON_CPPFLAGS) -DNOOK_DISABLE_AGENT_AUTO_INIT=1
-LOCAL_CFLAGS := $(NOOK_COMMON_CFLAGS)
-LOCAL_CPP_FEATURES := exceptions
-LOCAL_STATIC_LIBRARIES := c++_static
-LOCAL_LDFLAGS := -Wl,--exclude-libs,ALL
-LOCAL_LDLIBS := -llog -ldl
-
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-
 LOCAL_MODULE := nook_zygote_helper
 LOCAL_MODULE_FILENAME := libnook-zygote-helper
 
@@ -268,22 +234,6 @@ LOCAL_CFLAGS := $(NOOK_COMMON_CFLAGS)
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_STATIC_LIBRARIES := c++_static
 LOCAL_LDFLAGS := -Wl,--exclude-libs,ALL
-LOCAL_LDLIBS := -llog -ldl
-
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-
-LOCAL_MODULE := nook_gadget_smoke
-
-LOCAL_C_INCLUDES := $(NOOK_COMMON_INCLUDES)
-LOCAL_SRC_FILES := \
-    ../../examples/communication/nook_gadget_smoke.cpp \
-    $(NOOK_GADGET_SRC)
-
-LOCAL_CPPFLAGS := $(NOOK_COMMON_CPPFLAGS) -DNOOK_DISABLE_AGENT_AUTO_INIT=1
-LOCAL_CFLAGS := $(NOOK_COMMON_CFLAGS)
-LOCAL_CPP_FEATURES := exceptions
 LOCAL_LDLIBS := -llog -ldl
 
 include $(BUILD_SHARED_LIBRARY)
