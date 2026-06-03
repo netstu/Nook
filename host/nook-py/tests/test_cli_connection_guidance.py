@@ -1,4 +1,6 @@
 from io import StringIO
+import os
+import tempfile
 import unittest
 
 from nook import cli
@@ -26,6 +28,44 @@ class CliConnectionGuidanceTests(unittest.TestCase):
         self.assertIn("GitHub Release", error_output)
         self.assertIn("adb push", error_output)
         self.assertIn("su -c", error_output)
+
+    def test_cli_reports_gadget_specific_guidance_when_gadget_attach_fails(self):
+        stderr = StringIO()
+        stdout = StringIO()
+        stdin = StringIO("%exit\n")
+
+        class AttachErrorDevice:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+            def attach(self, target):
+                raise ConnectionError("socket closed")
+
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
+            handle.write("console.log('gadget-guidance')")
+            script_path = handle.name
+
+        try:
+            exit_code = cli.main(
+                argv=["-U", "--gadget", "com.demo.target", "-l", script_path],
+                device_factory=lambda **kwargs: None,
+                usb_device_factory=lambda **kwargs: AttachErrorDevice(),
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        finally:
+            os.unlink(script_path)
+
+        error_output = stderr.getvalue()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Nook Gadget listen socket", error_output)
+        self.assertIn("nook-cli -U --gadget com.demo.target -l hook.js", error_output)
+        self.assertNotIn("nook-server", error_output)
 
 
 if __name__ == "__main__":

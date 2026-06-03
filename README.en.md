@@ -1,22 +1,20 @@
 # Nook
 
-Nook is a dynamic instrumentation toolkit for rooted Android devices.
+Nook is an Android dynamic instrumentation toolkit built on one shared hooking core.
 
-This public source tree currently focuses on:
+This repository currently exposes three practical surfaces:
 
-- Android
-- root access
-- arm64-v8a
-- `spawn` / `attach`
-- Java / native / memory instrumentation
-- single-file deployment through `nook-server`
-- Python CLI: `nook-cli`
+- `libnook.so`: embedded framework for app-side or injector-side payloads
+- `nook-server`: rooted device runtime for Frida-style `spawn` / `attach`
+- `nook-gadget`: APK-patched in-app runtime for gadget workflows
+
+The main public target is **arm64-v8a** on Android.
 
 ## Quick Start
 
-### 1. Build `nook-server`
+### 1. Rooted `nook-server` workflow
 
-From the repository root:
+Build the server package from the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build_single_server_package.ps1 -ForceRebuild
@@ -28,27 +26,7 @@ Expected output:
 build/single-server-package/arm64-v8a/nook-server
 ```
 
-If `ndk-build` is not in `PATH`, set:
-
-```powershell
-$env:NOOK_NDK_BUILD="E:\SDK\ndk\25.2.9519653\ndk-build.cmd"
-```
-
-### 2. Install `nook-cli`
-
-From `host/nook-py`:
-
-```powershell
-python -m pip install .
-```
-
-Then verify:
-
-```powershell
-nook-cli --help
-```
-
-### 3. Deploy and start the server
+Deploy and start it on device:
 
 ```powershell
 adb shell "su -c 'mkdir -p /data/local/tmp/nook'"
@@ -57,50 +35,71 @@ adb shell "su -c 'chmod 755 /data/local/tmp/nook/nook-server'"
 adb shell "su -c '/data/local/tmp/nook/nook-server'"
 ```
 
-If your device requires an explicit linker launch:
-
-```powershell
-adb shell "su -c 'LD_LIBRARY_PATH=/data/local/tmp/nook:$LD_LIBRARY_PATH /system/bin/linker64 /data/local/tmp/nook/nook-server'"
-```
-
-## Basic Usage
-
-### Attach
-
-```powershell
-nook-cli -U com.demo.target -l .\hook.js
-```
-
-### Spawn
+Common host commands:
 
 ```powershell
 nook-cli -U -f com.demo.target -l .\hook.js
+nook-cli -U com.demo.target -l .\hook.js
 ```
 
-### List apps / processes
+Without `--gadget`, `nook-cli -U ...` assumes a running rooted `nook-server`.
+
+### 2. `nook-gadget` APK workflow
+
+Build the gadget library:
 
 ```powershell
-nook-cli apps
-nook-cli ps
+powershell -ExecutionPolicy Bypass -File .\tools\build_nook_gadget.ps1 -ForceRebuild
 ```
+
+Patch an APK and package a startup script:
+
+```powershell
+nook-cli patchapk .\target.apk -s .\startup.js
+```
+
+Or use the short helper:
+
+```powershell
+nook-gadget patchapk --source .\target.apk --startup-script .\startup.js
+```
+
+Patch an APK in gadget `listen` mode and hold the process until the host attaches:
+
+```powershell
+nook-cli patchapk .\target.apk --on-load wait
+```
+
+Attach from the host to a gadgetized app:
+
+```powershell
+nook-cli -U --gadget com.demo.target -l .\hook.js
+```
+
+Important gadget semantics:
+
+- `--gadget` explicitly selects the gadget `listen` socket path
+- `--on-load resume` is the default
+- `--on-load wait` pauses the app until the host loads a script and resumes it
+- both packaged startup-script mode and host-attached `listen` mode are supported
 
 ## Repository Layout
 
 ```text
 build/android/      Android NDK build files
-docs/               core architecture and design docs
-examples/           basic examples
-host/nook-py/       Python SDK and CLI
+docs/               architecture, design, and validation notes
+examples/           sample payloads and demos
+host/nook-py/       Python CLI and gadget helpers
 include/            public headers
 server/             nook-server sources
 src/                framework and runtime sources
 tests/              unit and regression tests
-third_party/        third-party dependencies
-tools/              build and helper scripts
+third_party/        bundled dependencies
+tools/              build, patch, and validation scripts
 ```
 
 ## Notes
 
-- This repository is intended to be cloneable and buildable by contributors.
-- `nook-cli` does not bundle the Android server binary.
-- The current public target is rooted Android arm64.
+- Current primary target: rooted Android arm64
+- `nook-cli patchapk` and `nook-gadget patchapk` share the same patch engine
+- `--gadget` is explicit by design; normal attach syntax still targets `nook-server`

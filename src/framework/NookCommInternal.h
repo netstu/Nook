@@ -4,12 +4,22 @@
 #include "nook/Nook.h"
 
 #include <functional>
+#include <memory>
 #include <string>
+
+namespace nook {
+namespace comm {
+
+class Transport;
+
+}  // namespace comm
+}  // namespace nook
 
 namespace nook {
 namespace framework {
 
 using RpcRequestHandler = std::function<comm::RpcResponse(const comm::RpcRequest&)>;
+using ExternalResumeHandler = std::function<NookStatus(uint32_t pid, bool* handled)>;
 
 void SetPendingScriptCallbackError(std::string message);
 std::string TakePendingScriptCallbackError();
@@ -20,7 +30,14 @@ bool HasInternalRpcRequestHandlers();
 comm::RpcResponse DispatchInternalRpcRequest(const comm::RpcRequest& request);
 void SetInternalRpcRequestHandler(RpcRequestHandler handler);
 void RefreshAgentCallbacksForInternalRpc();
+void SetExternalResumeHandler(ExternalResumeHandler handler);
+void ResetExternalResumeHandler();
+bool HasActiveControlChannelConnection();
 NookStatus EnsureControlChannelReadyForCurrentProcess();
+NookStatus EnsureOutboundControlChannelReadyForCurrentProcess(const char* host, int port);
+NookStatus AdoptInboundControlChannelTransportForCurrentProcess(
+    std::unique_ptr<nook::comm::Transport> transport);
+NookStatus NotifyRuntimeReadyToServer();
 NookStatus EnsureFullAgentReadyForCurrentProcess();
 NookStatus NotifyZygoteControlReadyToServer();
 NookStatus ResetZygoteControlConnectionStateForReinit();
