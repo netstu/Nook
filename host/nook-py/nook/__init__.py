@@ -6,7 +6,7 @@ from .errors import NookError
 from .script import Script
 from .session import Session
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "Device",

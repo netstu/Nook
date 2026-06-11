@@ -46,6 +46,7 @@ nook-cli
 __pycache__/
 *.pyc
 /host/nook-py/dist/
+/host/nook-py/build/
 /host/nook-py/*.egg-info/
 /host/nook-py/debug_probes/
 /host/nook-py/*-dexdump/

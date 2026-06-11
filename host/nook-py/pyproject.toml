@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nook-cli"
-version = "0.1.2"
+version = "0.1.3"
 description = "Python CLI for the Nook Android instrumentation server"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8"

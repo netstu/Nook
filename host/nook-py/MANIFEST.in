@@ -1,0 +1,9 @@
+prune tests
+prune build
+prune dist
+prune debug_probes
+prune cn.n1ng.aboutbear-sodump
+prune com.demo.target-sodump
+exclude setup.cfg
+global-exclude *.pyc
+global-exclude __pycache__

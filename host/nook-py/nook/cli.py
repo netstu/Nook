@@ -123,9 +123,30 @@ def _derive_usb_gadget_attach_socket_name(args) -> Optional[str]:
     return _derive_gadget_listen_socket_name(normalized)
 
 
-def _should_retry_usb_attach_via_gadget(exc: BaseException) -> bool:
+def _is_connection_refused_error(exc: BaseException) -> bool:
     lowered = (str(exc) or exc.__class__.__name__).lower()
-    return any(marker in lowered for marker in ("socket", "connection refused", "closed", "actively refused"))
+    return any(
+        marker in lowered
+        for marker in (
+            "connection refused",
+            "actively refused",
+            "积极拒绝",
+            "winerror 10061",
+            "errno 111",
+            "econnrefused",
+        )
+    )
+
+
+def _is_connection_transport_error(exc: BaseException) -> bool:
+    lowered = (str(exc) or exc.__class__.__name__).lower()
+    if _is_connection_refused_error(exc):
+        return True
+    return any(marker in lowered for marker in ("socket", "closed", "adb", "device"))
+
+
+def _should_retry_usb_attach_via_gadget(exc: BaseException) -> bool:
+    return _is_connection_transport_error(exc)
 
 
 def _default_usb_device_factory(
@@ -716,9 +737,8 @@ def _format_gadget_connection_guidance(message: str, target: Optional[str] = Non
 
 
 def _rewrite_connection_error(message: str, args=None) -> str:
-    lowered = message.lower()
-    if any(marker in lowered for marker in ("socket", "connection refused", "adb", "device", "closed")):
-        if getattr(args, "gadget", False):
+    if _is_connection_transport_error(Exception(message)):
+        if getattr(args, "gadget", False) and _is_attach_mode(args):
             target = None
             if getattr(args, "command", None) == "attach":
                 target = getattr(args, "target", None)

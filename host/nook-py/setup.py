@@ -8,7 +8,7 @@ README = Path(__file__).with_name("README.md").read_text(encoding="utf-8")
 
 setup(
     name="nook-cli",
-    version="0.1.2",
+    version="0.1.3",
     description="Python CLI for the Nook Android instrumentation server",
     long_description=README,
     long_description_content_type="text/markdown",
